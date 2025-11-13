@@ -31,7 +31,7 @@ type LabOrder = {
   createdAt: number;
 };
 
-type PatientDetailRes = { patient: Patient; notes: Note[]; appointments: Appointment[]; labs: LabOrder[] };
+type PatientDetailRes = { patient: Patient; notes: Note[]; appointments: Appointment[]; labs?: LabOrder[] };
 
 type Lab = { name: string; city: string; tests: string[] };
 type LabsRes = { labs: Lab[] };
@@ -106,15 +106,23 @@ export default function PatientDetail() {
     setDetailError(null);
     try {
       const res = await apiFetch(`/api/patients/${id}`);
+      if (res.status === 401) {
+        navigate('/login');
+        return;
+      }
+      if (res.status === 404) {
+        setDetailError('Patient not found');
+        return;
+      }
       if (!res.ok) {
-        const info = await res.json();
+        const info = await res.json().catch(() => null);
         throw new Error(info?.error || 'Could not load patient');
       }
       const data = await getJson<PatientDetailRes>(res);
       setPatient(data.patient);
       setNotes(data.notes);
       setAppointments(data.appointments);
-      setLabs(data.labs);
+      setLabs(data.labs ?? []);
       setEditForm({
         name: data.patient.name,
         dob: data.patient.dob ?? '',
@@ -128,7 +136,7 @@ export default function PatientDetail() {
     } finally {
       setDetailLoading(false);
     }
-  }, [id]);
+  }, [id, navigate]);
 
   useEffect(() => {
     if (me) fetchDetail();
@@ -146,7 +154,7 @@ export default function PatientDetail() {
       setLabSearchStatus('Add the patient address to fetch nearby labs.');
       return () => { ignore = true; };
     }
-    setLabSearchStatus('Searching labs…');
+    setLabSearchStatus('Searching labs...');
     const params = new URLSearchParams({ address: patient.address, test: labTest });
     (async () => {
       try {
@@ -231,6 +239,10 @@ export default function PatientDetail() {
           notes: labNote.trim() || undefined,
         },
       });
+      if (res.status === 401) {
+        navigate('/login');
+        return;
+      }
       const info = await res.json();
       if (!res.ok) throw new Error(info?.error || 'Could not create lab order');
       setLabActionStatus('Lab order created.');
@@ -247,6 +259,10 @@ export default function PatientDetail() {
   async function handleLabStatusChange(orderId: number, status: string) {
     try {
       const res = await apiFetch(`/api/lab-orders/${orderId}`, { method: 'PATCH', json: { status } });
+      if (res.status === 401) {
+        navigate('/login');
+        return;
+      }
       if (!res.ok) {
         const info = await res.json();
         throw new Error(info?.error || 'Unable to update lab order');
