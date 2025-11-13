@@ -83,6 +83,10 @@ export default function DashboardPage() {
   const [labError, setLabError] = useState<string | null>(null);
 
   const navigate = useNavigate();
+  const handleSessionExpired = useCallback(() => {
+    setMe(null);
+    navigate('/login');
+  }, [navigate]);
 
   // --- Auth & initial data ---
   useEffect(() => {
@@ -109,6 +113,7 @@ export default function DashboardPage() {
     setPatientsLoading(true);
     try {
       const res = await apiFetch('/api/patients');
+      if (res.status === 401) { handleSessionExpired(); return; }
       if (!res.ok) throw new Error('Failed to load patients');
       const data = await getJson<PatientsRes>(res);
       setPatients(data.patients);
@@ -118,12 +123,13 @@ export default function DashboardPage() {
     } finally {
       setPatientsLoading(false);
     }
-  }, []);
+  }, [handleSessionExpired]);
 
   const loadAppointments = useCallback(async () => {
     setAppointmentsLoading(true);
     try {
       const res = await apiFetch('/api/appointments/upcoming');
+      if (res.status === 401) { handleSessionExpired(); return; }
       if (!res.ok) throw new Error('Failed to load appointments');
       const data = await getJson<AppointmentsRes>(res);
       setAppointments(data.appointments);
@@ -133,7 +139,7 @@ export default function DashboardPage() {
     } finally {
       setAppointmentsLoading(false);
     }
-  }, []);
+  }, [handleSessionExpired]);
 
   useEffect(() => {
     if (!me) return;
@@ -166,6 +172,7 @@ export default function DashboardPage() {
     (async () => {
       try {
         const res = await apiFetch(`/api/labs/nearby?${params.toString()}`);
+        if (res.status === 401) { handleSessionExpired(); return; }
         if (!res.ok) throw new Error('lab_error');
         const data = await getJson<LabsRes>(res);
         if (!ignore) setLabResults(data.labs);
@@ -179,7 +186,7 @@ export default function DashboardPage() {
       }
     })();
     return () => { ignore = true; };
-  }, [apptForm.requireLab, apptForm.labTest, selectedPatient?.address]);
+  }, [apptForm.requireLab, apptForm.labTest, selectedPatient?.address, handleSessionExpired]);
 
   const metrics = useMemo(() => {
     const now = new Date();
@@ -219,6 +226,7 @@ export default function DashboardPage() {
     setPatientSaving(true);
     try {
       const res = await apiFetch('/api/patients', { method: 'POST', json: patientForm });
+      if (res.status === 401) { handleSessionExpired(); return; }
       const info = await res.json();
       if (!res.ok) throw new Error(info?.error || 'Unable to add patient');
       setPatientForm(PATIENT_FORM_DEFAULT);
@@ -262,6 +270,7 @@ export default function DashboardPage() {
           reason: reasonParts.join(' | ') || 'Consult',
         },
       });
+      if (res.status === 401) { handleSessionExpired(); return; }
       const info = await res.json();
       if (!res.ok) throw new Error(info?.error || 'Unable to schedule appointment');
       setApptForm((prev) => ({ ...APPOINTMENT_FORM_DEFAULT, patientId: prev.patientId || selectedPatient.id }));
