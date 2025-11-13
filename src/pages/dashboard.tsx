@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+﻿import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { apiFetch, getJson } from '../lib/api';
@@ -8,11 +8,11 @@ type Me = { user: { email: string } | null };
 type Patient = {
   id: string;
   name: string;
-  dob?: string;
-  gender?: string;
-  phone?: string;
-  email?: string;
-  address?: string;
+  dob?: string | null;
+  gender?: string | null;
+  phone?: string | null;
+  email?: string | null;
+  address?: string | null;
   createdAt: number;
 };
 
@@ -22,8 +22,8 @@ type Appointment = {
   id: number;
   patientId: string;
   startTs: number;
-  reason?: string;
-  patient?: Patient;
+  reason?: string | null;
+  patient?: { id: string; name: string };
 };
 
 type AppointmentsRes = { appointments: Appointment[] };
@@ -31,7 +31,20 @@ type AppointmentsRes = { appointments: Appointment[] };
 type Lab = { name: string; city: string; tests: string[] };
 type LabsRes = { labs: Lab[] };
 
+type LabOrder = {
+  id: number;
+  patientId: string;
+  test: string;
+  labName?: string | null;
+  labCity?: string | null;
+  status: string;
+  notes?: string | null;
+  createdAt: number;
+};
+type LabOrdersRes = { labOrders: LabOrder[] };
+
 const LAB_TESTS = ['Bloodwork', 'MRI', 'X-Ray', 'Ultrasound'];
+const LAB_STATUSES = ['requested', 'scheduled', 'completed', 'cancelled'] as const;
 const ISSUE_MEDICATIONS: Record<string, string[]> = {
   Hypertension: ['Lisinopril', 'Amlodipine', 'Losartan'],
   'Type 2 Diabetes': ['Metformin', 'Empagliflozin', 'Semaglutide'],
@@ -39,7 +52,6 @@ const ISSUE_MEDICATIONS: Record<string, string[]> = {
   Anxiety: ['Sertraline', 'Buspirone', 'Escitalopram'],
   'Respiratory Infection': ['Azithromycin', 'Amoxicillin', 'Levofloxacin'],
 };
-
 const ISSUE_OPTIONS = Object.keys(ISSUE_MEDICATIONS);
 
 const PATIENT_FORM_DEFAULT = {
@@ -58,37 +70,41 @@ const APPOINTMENT_FORM_DEFAULT = {
   reason: '',
   requireLab: false,
   labTest: LAB_TESTS[0],
+  labNotes: '',
   requireMeds: false,
   issueKey: '',
   medication: '',
 };
 
 export default function DashboardPage() {
+  const navigate = useNavigate();
   const [me, setMe] = useState<string | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [tab, setTab] = useState<'Overview' | 'Patients' | 'Referrals' | 'Schedule' | 'Settings'>('Overview');
 
   const [patients, setPatients] = useState<Patient[]>([]);
   const [patientsLoading, setPatientsLoading] = useState(false);
-  const [patientForm, setPatientForm] = useState(PATIENT_FORM_DEFAULT);
-  const [patientFormError, setPatientFormError] = useState<string | null>(null);
-  const [patientSaving, setPatientSaving] = useState(false);
-
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [appointmentsLoading, setAppointmentsLoading] = useState(false);
+  const [labOrders, setLabOrders] = useState<LabOrder[]>([]);
+  const [labOrdersLoading, setLabOrdersLoading] = useState(false);
+
+  const [patientForm, setPatientForm] = useState(PATIENT_FORM_DEFAULT);
+  const [patientFeedback, setPatientFeedback] = useState<{ kind: 'error' | 'success'; message: string } | null>(null);
+  const [patientSaving, setPatientSaving] = useState(false);
+
   const [apptForm, setApptForm] = useState(APPOINTMENT_FORM_DEFAULT);
   const [apptStatus, setApptStatus] = useState<string | null>(null);
   const [labResults, setLabResults] = useState<Lab[]>([]);
   const [labLoading, setLabLoading] = useState(false);
   const [labError, setLabError] = useState<string | null>(null);
+  const [selectedLab, setSelectedLab] = useState<Lab | null>(null);
 
-  const navigate = useNavigate();
   const handleSessionExpired = useCallback(() => {
     setMe(null);
     navigate('/login');
   }, [navigate]);
 
-  // --- Auth & initial data ---
   useEffect(() => {
     let ignore = false;
     (async () => {
@@ -97,7 +113,7 @@ export default function DashboardPage() {
         const data = await getJson<Me>(res);
         if (!ignore) setMe(data.user?.email ?? null);
       } catch (err) {
-        console.error('me error', err);
+        console.error('auth me error', err);
       } finally {
         if (!ignore) setAuthLoading(false);
       }
@@ -113,7 +129,7 @@ export default function DashboardPage() {
     setPatientsLoading(true);
     try {
       const res = await apiFetch('/api/patients');
-      if (res.status === 401) { handleSessionExpired(); return; }
+      if (res.status === 401) return handleSessionExpired();
       if (!res.ok) throw new Error('Failed to load patients');
       const data = await getJson<PatientsRes>(res);
       setPatients(data.patients);
@@ -129,7 +145,7 @@ export default function DashboardPage() {
     setAppointmentsLoading(true);
     try {
       const res = await apiFetch('/api/appointments/upcoming');
-      if (res.status === 401) { handleSessionExpired(); return; }
+      if (res.status === 401) return handleSessionExpired();
       if (!res.ok) throw new Error('Failed to load appointments');
       const data = await getJson<AppointmentsRes>(res);
       setAppointments(data.appointments);
@@ -141,99 +157,135 @@ export default function DashboardPage() {
     }
   }, [handleSessionExpired]);
 
+  const loadLabOrders = useCallback(async () => {
+    setLabOrdersLoading(true);
+    try {
+      const res = await apiFetch('/api/lab-orders');
+      if (res.status === 401) return handleSessionExpired();
+      if (!res.ok) throw new Error('Failed to load lab orders');
+      const data = await getJson<LabOrdersRes>(res);
+      setLabOrders(data.labOrders);
+    } catch (err) {
+      console.error(err);
+      setLabOrders([]);
+    } finally {
+      setLabOrdersLoading(false);
+    }
+  }, [handleSessionExpired]);
+
   useEffect(() => {
     if (!me) return;
     loadPatients();
     loadAppointments();
-  }, [me, loadPatients, loadAppointments]);
+    loadLabOrders();
+  }, [me, loadPatients, loadAppointments, loadLabOrders]);
 
   useEffect(() => {
-    if (!patients.length) return;
+    if (patients.length === 0) return;
     setApptForm((prev) => (prev.patientId ? prev : { ...prev, patientId: patients[0].id }));
   }, [patients]);
 
-  const selectedPatient = useMemo(() => {
-    if (!patients.length) return null;
-    return patients.find((p) => p.id === apptForm.patientId) ?? patients[0];
-  }, [patients, apptForm.patientId]);
-
-  // Auto-fetch labs when requested
   useEffect(() => {
-    let ignore = false;
-    const shouldFetch = apptForm.requireLab && !!selectedPatient?.address && !!apptForm.labTest;
-    if (!shouldFetch) {
+    if (!apptForm.requireLab) {
+      setSelectedLab(null);
       setLabResults([]);
-      setLabError(apptForm.requireLab ? 'Add an address for this patient to suggest labs.' : null);
-      return undefined;
+      setLabError(null);
+      return;
+    }
+    const patient = patients.find((p) => p.id === apptForm.patientId);
+    if (!patient?.address) {
+      setLabResults([]);
+      setLabError('Add an address to suggest nearby labs.');
+      return;
     }
     setLabLoading(true);
     setLabError(null);
-    const params = new URLSearchParams({ address: selectedPatient.address!, test: apptForm.labTest });
+    const params = new URLSearchParams({ address: patient.address, test: apptForm.labTest });
+    let ignore = false;
     (async () => {
       try {
         const res = await apiFetch(`/api/labs/nearby?${params.toString()}`);
-        if (res.status === 401) { handleSessionExpired(); return; }
+        if (res.status === 401) return handleSessionExpired();
         if (!res.ok) throw new Error('lab_error');
         const data = await getJson<LabsRes>(res);
-        if (!ignore) setLabResults(data.labs);
-      } catch {
+        if (!ignore) {
+          setLabResults(data.labs);
+          setSelectedLab(data.labs[0] ?? null);
+        }
+      } catch (err) {
+        console.error(err);
         if (!ignore) {
           setLabResults([]);
-          setLabError('No labs found for that test near this address.');
+          setLabError('No labs found for that test near this patient.');
         }
       } finally {
         if (!ignore) setLabLoading(false);
       }
     })();
     return () => { ignore = true; };
-  }, [apptForm.requireLab, apptForm.labTest, selectedPatient?.address, handleSessionExpired]);
+  }, [apptForm.requireLab, apptForm.labTest, apptForm.patientId, patients, handleSessionExpired]);
 
-  const metrics = useMemo(() => {
-    const now = new Date();
-    const todayKey = now.toDateString();
-    const weekAhead = now.getTime() + 7 * 24 * 60 * 60 * 1000;
-    const todayCount = appointments.filter((a) => new Date(a.startTs * 1000).toDateString() === todayKey).length;
-    const upcomingWeek = appointments.filter((a) => a.startTs * 1000 <= weekAhead).length;
-    const labTagged = appointments.filter((a) => a.reason?.includes('Lab:')).length;
-    return [
-      { label: 'Total Patients', value: patients.length.toString(), accent: '#1AA898' },
-      { label: 'Today’s Visits', value: todayCount.toString(), accent: '#122E3A' },
-      { label: 'Next 7 Days', value: upcomingWeek.toString(), accent: '#BCC46A' },
-      { label: 'Lab Follow-ups', value: labTagged.toString(), accent: '#FBECB8' },
-    ];
-  }, [patients.length, appointments]);
+  useEffect(() => {
+    if (!apptForm.issueKey) {
+      setApptForm((prev) => ({ ...prev, medication: '' }));
+      return;
+    }
+    setApptForm((prev) => {
+      const meds = ISSUE_MEDICATIONS[prev.issueKey] || [];
+      return { ...prev, medication: prev.medication && meds.includes(prev.medication) ? prev.medication : meds[0] ?? '' };
+    });
+  }, [apptForm.issueKey]);
+
+  const patientMap = useMemo(() => {
+    const map = new Map<string, Patient>();
+    patients.forEach((p) => map.set(p.id, p));
+    return map;
+  }, [patients]);
 
   const groupedAppointments = useMemo(() => {
-    const map = new Map<string, Appointment[]>();
+    const groups = new Map<string, Appointment[]>();
     appointments.forEach((appt) => {
-      const date = new Date(appt.startTs * 1000);
-      const key = date.toDateString();
-      if (!map.has(key)) map.set(key, []);
-      map.get(key)!.push(appt);
+      const dayKey = new Date(appt.startTs * 1000).toDateString();
+      if (!groups.has(dayKey)) groups.set(dayKey, []);
+      groups.get(dayKey)!.push(appt);
     });
-    return Array.from(map.entries())
-      .map(([key, group]) => ({ key, date: new Date(key), items: group.sort((a, b) => a.startTs - b.startTs) }))
+    return Array.from(groups.entries())
+      .map(([key, list]) => ({ key, date: new Date(key), items: list.sort((a, b) => a.startTs - b.startTs) }))
       .sort((a, b) => a.date.getTime() - b.date.getTime());
   }, [appointments]);
 
+  const metrics = useMemo(() => {
+    const uniquePatients = patients.length;
+    const upcomingWeek = appointments.filter((a) => a.startTs * 1000 <= Date.now() + 7 * 24 * 60 * 60 * 1000).length;
+    const labsPending = labOrders.filter((l) => l.status !== 'completed' && l.status !== 'cancelled').length;
+    const today = new Date().toDateString();
+    const todayVisits = appointments.filter((a) => new Date(a.startTs * 1000).toDateString() === today).length;
+    return [
+      { label: 'Total Patients', value: uniquePatients.toString(), accent: '#1AA898' },
+      { label: 'Today’s Visits', value: todayVisits.toString(), accent: '#122E3A' },
+      { label: 'Next 7 Days', value: upcomingWeek.toString(), accent: '#BCC46A' },
+      { label: 'Lab Follow-ups', value: labsPending.toString(), accent: '#FBECB8' },
+    ];
+  }, [patients.length, appointments, labOrders]);
+
   async function handleCreatePatient(e: FormEvent) {
     e.preventDefault();
-    setPatientFormError(null);
+    setPatientFeedback(null);
     if (!patientForm.name.trim()) {
-      setPatientFormError('Name is required.');
+      setPatientFeedback({ kind: 'error', message: 'Name is required.' });
       return;
     }
     setPatientSaving(true);
     try {
       const res = await apiFetch('/api/patients', { method: 'POST', json: patientForm });
-      if (res.status === 401) { handleSessionExpired(); return; }
+      if (res.status === 401) return handleSessionExpired();
       const info = await res.json();
       if (!res.ok) throw new Error(info?.error || 'Unable to add patient');
       setPatientForm(PATIENT_FORM_DEFAULT);
+      setPatientFeedback({ kind: 'success', message: 'Patient saved.' });
       await loadPatients();
-      setPatientFormError('Patient added successfully.');
     } catch (err: any) {
-      setPatientFormError(err?.message || 'Unable to add patient');
+      setPatientFeedback({ kind: 'error', message: err?.message || 'Unable to add patient' });
     } finally {
       setPatientSaving(false);
     }
@@ -242,7 +294,8 @@ export default function DashboardPage() {
   async function handleCreateAppointment(e: FormEvent) {
     e.preventDefault();
     setApptStatus(null);
-    if (!selectedPatient) {
+    const patientId = apptForm.patientId || patients[0]?.id;
+    if (!patientId) {
       setApptStatus('Add a patient first.');
       return;
     }
@@ -252,42 +305,63 @@ export default function DashboardPage() {
     }
     const start = new Date(`${apptForm.date}T${apptForm.time}`);
     if (Number.isNaN(start.getTime())) {
-      setApptStatus('Invalid date or time.');
+      setApptStatus('Invalid date/time.');
       return;
     }
     const reasonParts = [apptForm.reason.trim()].filter(Boolean);
     if (apptForm.requireLab) reasonParts.push(`Lab: ${apptForm.labTest}`);
-    if (apptForm.requireMeds && apptForm.issueKey) {
-      const med = apptForm.medication || ISSUE_MEDICATIONS[apptForm.issueKey]?.[0] || 'tbd';
-      reasonParts.push(`Rx: ${apptForm.issueKey} (${med})`);
-    }
+    if (apptForm.requireMeds && apptForm.issueKey) reasonParts.push(`Rx: ${apptForm.issueKey}`);
+    const noteContent = apptForm.requireMeds && apptForm.issueKey
+      ? `Plan: ${apptForm.issueKey} ? ${apptForm.medication || 'tbd'}`
+      : undefined;
+    const labPayload = apptForm.requireLab && apptForm.labTest
+      ? {
+          test: apptForm.labTest,
+          labName: selectedLab?.name,
+          labCity: selectedLab?.city,
+          notes: apptForm.labNotes?.trim() || undefined,
+        }
+      : undefined;
     try {
       const res = await apiFetch('/api/appointments', {
         method: 'POST',
         json: {
-          patientId: apptForm.patientId || selectedPatient.id,
+          patientId,
           startTs: Math.floor(start.getTime() / 1000),
           reason: reasonParts.join(' | ') || 'Consult',
+          labOrder: labPayload,
+          noteContent,
         },
       });
-      if (res.status === 401) { handleSessionExpired(); return; }
+      if (res.status === 401) return handleSessionExpired();
       const info = await res.json();
       if (!res.ok) throw new Error(info?.error || 'Unable to schedule appointment');
-      setApptForm((prev) => ({ ...APPOINTMENT_FORM_DEFAULT, patientId: prev.patientId || selectedPatient.id }));
-      setLabResults([]);
       setApptStatus('Appointment scheduled.');
-      await loadAppointments();
+      setApptForm(() => ({ ...APPOINTMENT_FORM_DEFAULT, patientId }));
+      setSelectedLab(null);
+      setLabResults([]);
+      await Promise.all([loadAppointments(), loadLabOrders()]);
     } catch (err: any) {
       setApptStatus(err?.message || 'Unable to schedule appointment');
     }
   }
 
+  async function handleLabStatusChange(orderId: number, status: string) {
+    try {
+      const res = await apiFetch(`/api/lab-orders/${orderId}`, { method: 'PATCH', json: { status } });
+      if (res.status === 401) return handleSessionExpired();
+      if (!res.ok) {
+        const info = await res.json();
+        throw new Error(info?.error || 'Unable to update lab order');
+      }
+      await loadLabOrders();
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
   if (authLoading || !me) {
-    return (
-      <div className="min-h-screen flex items-center justify-center text-slate-500">
-        Checking access…
-      </div>
-    );
+    return <div className="min-h-screen flex items-center justify-center text-slate-500">Loading dashboard…</div>;
   }
 
   const issueMedOptions = apptForm.issueKey ? ISSUE_MEDICATIONS[apptForm.issueKey] ?? [] : [];
@@ -300,12 +374,12 @@ export default function DashboardPage() {
             <div className="font-semibold">MediLoop</div>
             <div className="flex items-center gap-3">
               <input className="hidden md:block w-64 text-sm rounded-md border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#1AA898]" placeholder="Search patients or notes" />
-              <button className="w-9 h-9 rounded-full border border-slate-200 bg-white hover:bg-slate-50" title="Notifications">🔔</button>
+              <button className="w-9 h-9 rounded-full border border-slate-200 bg-white hover:bg-slate-50" title="Notifications">??</button>
               <div className="w-9 h-9 rounded-full bg-gradient-to-br from-[#122E3A] to-[#1AA898] text-white flex items-center justify-center text-sm font-semibold">{(me || 'M')[0].toUpperCase()}</div>
             </div>
           </div>
           <div className="flex items-center gap-2 h-11">
-            {(['Overview','Patients','Referrals','Schedule','Settings'] as const).map((t) => (
+            {(['Overview', 'Patients', 'Referrals', 'Schedule', 'Settings'] as const).map((t) => (
               <button key={t} onClick={() => setTab(t)} aria-current={tab === t}
                 className={`px-3 py-2 rounded-md text-sm transition-colors ${tab === t ? 'bg-[#1AA898]/10 text-[#0e7b6e] border border-[#1AA898]/20' : 'text-slate-700 hover:bg-slate-100'}`}>
                 {t}
@@ -333,16 +407,20 @@ export default function DashboardPage() {
               <section className="lg:col-span-2 bg-white rounded-xl border border-slate-200 overflow-hidden">
                 <header className="px-4 py-3 border-b border-slate-200 flex items-center justify-between">
                   <h2 className="font-semibold">Patients</h2>
-                  <button className="text-sm text-[#1AA898] hover:underline" onClick={() => setTab('Patients')}>Add Patient</button>
+                  <button className="text-sm text-[#1AA898] hover:underline" onClick={() => setTab('Patients')}>Manage</button>
                 </header>
                 <PatientTable patients={patients} loading={patientsLoading} />
               </section>
 
               <section className="bg-white rounded-xl border border-slate-200 p-4">
-                <h2 className="font-semibold mb-4">Referrals Snapshot</h2>
-                <ReferralList patients={patients} />
+                <div className="flex items-center justify-between mb-4">
+                  <h2 className="font-semibold">Lab follow-ups</h2>
+                  <button className="text-xs text-[#1AA898]" onClick={loadLabOrders}>Refresh</button>
+                </div>
+                <LabOrdersSnapshot labOrders={labOrders} loading={labOrdersLoading} patientMap={patientMap} onUpdateStatus={handleLabStatusChange} />
               </section>
             </div>
+...
 
             <section className="grid lg:grid-cols-3 gap-6">
               <div className="lg:col-span-2 bg-white rounded-xl border border-slate-200 p-4">
@@ -366,18 +444,14 @@ export default function DashboardPage() {
                         </div>
                         <ul className="divide-y divide-slate-100">
                           {items.map((item) => (
-                            <li key={item.id} className="px-4 py-3 flex items-center justify-between">
+                            <li key={item.id} className="px-4 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                               <div>
-                                <p className="font-semibold text-[#122E3A]">
-                                  {item.patient?.name || patients.find((p) => p.id === item.patientId)?.name || 'Patient'}
-                                </p>
-                                <p className="text-xs text-slate-500">{item.reason || 'General consult'}</p>
+                                <p className="font-semibold text-[#122E3A]">{item.patient?.name || patientMap.get(item.patientId)?.name || 'Patient'}</p>
+                                <p className="text-xs text-slate-500">{item.reason || 'Consult'}</p>
                               </div>
-                              <div className="text-right">
-                                <div className="text-sm font-medium">{formatTime(item.startTs)}</div>
-                                <Link to={`/dashboard/patients/${item.patientId}`} className="text-xs text-[#1AA898] hover:underline">
-                                  View chart
-                                </Link>
+                              <div className="text-sm text-right">
+                                <div className="font-medium">{formatTime(item.startTs)}</div>
+                                <Link to={`/dashboard/patients/${item.patientId}`} className="text-xs text-[#1AA898] hover:underline">View chart</Link>
                               </div>
                             </li>
                           ))}
@@ -432,16 +506,19 @@ export default function DashboardPage() {
                         {labLoading && <p className="text-xs text-slate-500">Finding nearby labs…</p>}
                         {labError && <p className="text-xs text-amber-600">{labError}</p>}
                         {!labLoading && labResults.length > 0 && (
-                          <div className="text-xs text-slate-600 space-y-1">
-                            {labResults.slice(0, 3).map((lab) => (
-                              <div key={lab.name} className="rounded-md border border-slate-200 px-2 py-1">
-                                <p className="font-medium text-slate-700">{lab.name}</p>
-                                <p>{lab.city}</p>
-                                <p>Tests: {lab.tests.join(', ')}</p>
-                              </div>
+                          <div className="space-y-2 max-h-40 overflow-auto">
+                            {labResults.map((lab) => (
+                              <label key={lab.name} className={`flex items-start gap-2 border rounded-lg px-2 py-2 text-xs ${selectedLab?.name === lab.name ? 'border-[#1AA898] bg-[#1AA898]/5' : 'border-slate-200'}`}>
+                                <input type="radio" name="lab-choice" checked={selectedLab?.name === lab.name} onChange={() => setSelectedLab(lab)} />
+                                <span>
+                                  <span className="font-semibold text-slate-700">{lab.name}</span>
+                                  <span className="block text-slate-500">{lab.city} · {lab.tests.join(', ')}</span>
+                                </span>
+                              </label>
                             ))}
                           </div>
                         )}
+                        <textarea className="w-full" rows={2} placeholder="Special instructions" value={apptForm.labNotes} onChange={(e) => setApptForm((prev) => ({ ...prev, labNotes: e.target.value }))} />
                       </div>
                     )}
                   </div>
@@ -455,18 +532,14 @@ export default function DashboardPage() {
                       <div className="space-y-2 text-sm">
                         <label className="block">
                           <span className="font-medium">Primary issue</span>
-                          <select className="mt-1 w-full" value={apptForm.issueKey} onChange={(e) => {
-                            const issueKey = e.target.value;
-                            const meds = ISSUE_MEDICATIONS[issueKey] || [];
-                            setApptForm((prev) => ({ ...prev, issueKey, medication: meds[0] ?? '' }));
-                          }}>
+                          <select className="mt-1 w-full" value={apptForm.issueKey} onChange={(e) => setApptForm((prev) => ({ ...prev, issueKey: e.target.value }))}>
                             <option value="">Select</option>
                             {ISSUE_OPTIONS.map((issue) => (
                               <option key={issue} value={issue}>{issue}</option>
                             ))}
                           </select>
                         </label>
-                        {!!issueMedOptions.length && (
+                        {issueMedOptions.length > 0 && (
                           <label className="block">
                             <span className="font-medium">Medication</span>
                             <select className="mt-1 w-full" value={apptForm.medication} onChange={(e) => setApptForm((prev) => ({ ...prev, medication: e.target.value }))}>
@@ -534,7 +607,9 @@ export default function DashboardPage() {
                   <span className="font-medium">Address</span>
                   <textarea className="mt-1 w-full" rows={2} value={patientForm.address} onChange={(e) => setPatientForm((prev) => ({ ...prev, address: e.target.value }))} />
                 </label>
-                {patientFormError && <p className="text-xs text-slate-500">{patientFormError}</p>}
+                {patientFeedback && (
+                  <p className={`text-xs ${patientFeedback.kind === 'error' ? 'text-red-600' : 'text-emerald-600'}`}>{patientFeedback.message}</p>
+                )}
                 <button type="submit" className="w-full btn btn-primary py-2" disabled={patientSaving}>
                   {patientSaving ? 'Saving…' : 'Save patient'}
                 </button>
@@ -561,13 +636,13 @@ export default function DashboardPage() {
             ) : (
               <div className="space-y-4">
                 {appointments.map((appt) => (
-                  <div key={appt.id} className="border border-slate-200 rounded-lg p-4 flex items-center justify-between">
+                  <div key={appt.id} className="border border-slate-200 rounded-lg p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                     <div>
-                      <p className="font-semibold text-[#122E3A]">{appt.patient?.name || patients.find((p) => p.id === appt.patientId)?.name}</p>
+                      <p className="font-semibold text-[#122E3A]">{appt.patient?.name || patientMap.get(appt.patientId)?.name || 'Patient'}</p>
                       <p className="text-sm text-slate-500">{appt.reason || 'Consult'}</p>
                     </div>
-                    <div className="text-right">
-                      <p className="text-sm font-medium">{formatDate(appt.startTs)} · {formatTime(appt.startTs)}</p>
+                    <div className="text-sm text-right">
+                      <p className="font-medium">{formatDate(appt.startTs)} · {formatTime(appt.startTs)}</p>
                       <Link className="text-xs text-[#1AA898]" to={`/dashboard/patients/${appt.patientId}`}>Open chart</Link>
                     </div>
                   </div>
@@ -600,37 +675,76 @@ function StatCard({ value, label, accent }: { value: string; label: string; acce
 }
 
 function PatientTable({ patients, loading }: { patients: Patient[]; loading: boolean }) {
-  if (loading) {
-    return <p className="text-sm text-slate-500 px-4 py-6">Loading patients…</p>;
-  }
-  if (patients.length === 0) {
-    return <p className="text-sm text-slate-500 px-4 py-6">No patients yet. Add one to get started.</p>;
-  }
+  if (loading) return <p className="text-sm text-slate-500 px-4 py-6">Loading patients…</p>;
+  if (patients.length === 0) return <p className="text-sm text-slate-500 px-4 py-6">No patients yet. Add one to get started.</p>;
   return (
-    <table className="w-full text-sm">
-      <thead className="text-left text-slate-500">
-        <tr className="border-b border-slate-200">
-          <th className="px-4 py-2">Name</th>
-          <th className="px-4 py-2">Contact</th>
-          <th className="px-4 py-2">Last updated</th>
-        </tr>
-      </thead>
-      <tbody>
-        {patients.map((p) => (
-          <tr key={p.id} className="border-b border-slate-100 hover:bg-slate-50">
-            <td className="px-4 py-3 text-[#122E3A] font-medium">
-              <Link to={`/dashboard/patients/${p.id}`} className="hover:underline">{p.name}</Link>
-            </td>
-            <td className="px-4 py-3 text-slate-600">
-              <div>{p.phone || '—'}</div>
-              <div className="text-xs text-slate-500">{p.email || 'No email'}</div>
-            </td>
-            <td className="px-4 py-3 text-slate-600">{formatRelative(p.createdAt)}</td>
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead className="text-left text-slate-500">
+          <tr className="border-b border-slate-200">
+            <th className="px-4 py-2">Name</th>
+            <th className="px-4 py-2">Contact</th>
+            <th className="px-4 py-2">Last update</th>
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {patients.map((p) => (
+            <tr key={p.id} className="border-b border-slate-100 hover:bg-slate-50">
+              <td className="px-4 py-3 text-[#122E3A] font-medium">
+                <Link to={`/dashboard/patients/${p.id}`} className="hover:underline">{p.name}</Link>
+              </td>
+              <td className="px-4 py-3 text-slate-600">
+                <div>{p.phone || '—'}</div>
+                <div className="text-xs text-slate-500">{p.email || 'No email'}</div>
+              </td>
+              <td className="px-4 py-3 text-slate-600">{formatRelative(p.createdAt)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
+}
+
+function LabOrdersSnapshot({ labOrders, loading, patientMap, onUpdateStatus }: {
+  labOrders: LabOrder[];
+  loading: boolean;
+  patientMap: Map<string, Patient>;
+  onUpdateStatus: (id: number, status: string) => Promise<void> | void;
+}) {
+  if (loading) return <p className="text-sm text-slate-500">Checking lab queue…</p>;
+  if (labOrders.length === 0) return <p className="text-sm text-slate-500">No lab orders yet.</p>;
+  return (
+    <div className="space-y-3">
+      {labOrders.slice(0, 4).map((order) => (
+        <div key={order.id} className="border border-slate-200 rounded-lg p-3 text-sm">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="font-semibold text-[#122E3A]">{patientMap.get(order.patientId)?.name || 'Patient'}</p>
+              <p className="text-xs text-slate-500">{order.test} · {order.labName || 'TBD'}</p>
+            </div>
+            <StatusBadge status={order.status} />
+          </div>
+          <select className="mt-2 w-full text-xs" value={order.status} onChange={(e) => onUpdateStatus(order.id, e.target.value)}>
+            {LAB_STATUSES.map((status) => (
+              <option key={status} value={status}>{status}</option>
+            ))}
+          </select>
+        </div>
+      ))}
+      {labOrders.length > 4 && <p className="text-xs text-slate-500">+{labOrders.length - 4} more</p>}
+    </div>
+  );
+}
+
+function StatusBadge({ status }: { status: string }) {
+  const colors: Record<string, string> = {
+    requested: 'bg-amber-50 text-amber-700 border-amber-200',
+    scheduled: 'bg-blue-50 text-blue-700 border-blue-200',
+    completed: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+    cancelled: 'bg-slate-50 text-slate-600 border-slate-200',
+  };
+  return <span className={`inline-flex items-center px-2 py-0.5 rounded-full border text-[11px] ${colors[status] || 'bg-slate-50 text-slate-600 border-slate-200'}`}>{status}</span>;
 }
 
 function ReferralList({ patients, detailed = false }: { patients: Patient[]; detailed?: boolean }) {
@@ -688,3 +802,4 @@ function formatRelative(tsSeconds: number) {
   if (months === 1) return '1 month ago';
   return `${months} months ago`;
 }
+

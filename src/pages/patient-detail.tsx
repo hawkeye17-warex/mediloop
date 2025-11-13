@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+﻿import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { FormEvent } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { apiFetch, getJson } from '../lib/api';
@@ -8,22 +8,36 @@ type Me = { user: { email: string } | null };
 type Patient = {
   id: string;
   name: string;
-  dob?: string;
-  gender?: string;
-  phone?: string;
-  email?: string;
-  address?: string;
+  dob?: string | null;
+  gender?: string | null;
+  phone?: string | null;
+  email?: string | null;
+  address?: string | null;
   createdAt: number;
 };
 
 type Note = { id: number; patientId: string; content: string; createdAt: number };
-type Appointment = { id: number; patientId: string; startTs: number; reason?: string };
-type PatientDetailRes = { patient: Patient; notes: Note[]; appointments: Appointment[] };
+
+type Appointment = { id: number; patientId: string; startTs: number; reason?: string | null };
+
+type LabOrder = {
+  id: number;
+  patientId: string;
+  test: string;
+  labName?: string | null;
+  labCity?: string | null;
+  status: string;
+  notes?: string | null;
+  createdAt: number;
+};
+
+type PatientDetailRes = { patient: Patient; notes: Note[]; appointments: Appointment[]; labs: LabOrder[] };
 
 type Lab = { name: string; city: string; tests: string[] };
 type LabsRes = { labs: Lab[] };
 
 const LAB_TESTS = ['Bloodwork', 'MRI', 'X-Ray', 'Ultrasound'];
+const LAB_STATUS_OPTIONS = ['requested', 'scheduled', 'completed', 'cancelled'] as const;
 const ISSUE_MEDICATIONS: Record<string, string[]> = {
   Hypertension: ['Lisinopril', 'Amlodipine', 'Losartan'],
   'Type 2 Diabetes': ['Metformin', 'Empagliflozin', 'Semaglutide'],
@@ -42,11 +56,12 @@ export default function PatientDetail() {
   const [patient, setPatient] = useState<Patient | null>(null);
   const [notes, setNotes] = useState<Note[]>([]);
   const [appointments, setAppointments] = useState<Appointment[]>([]);
+  const [labs, setLabs] = useState<LabOrder[]>([]);
   const [detailLoading, setDetailLoading] = useState(true);
   const [detailError, setDetailError] = useState<string | null>(null);
 
   const [editing, setEditing] = useState(false);
-  const [editForm, setEditForm] = useState({ name: '', dob: '', gender: '', phone: '', email: '', address: '' });
+  const [editForm, setEditForm] = useState({ name: '', dob: '', gender: 'Female', phone: '', email: '', address: '' });
   const [editStatus, setEditStatus] = useState<string | null>(null);
 
   const [showNoteForm, setShowNoteForm] = useState(false);
@@ -55,8 +70,12 @@ export default function PatientDetail() {
 
   const [needLab, setNeedLab] = useState(false);
   const [labTest, setLabTest] = useState(LAB_TESTS[0]);
-  const [labStatus, setLabStatus] = useState<string | null>(null);
   const [labResults, setLabResults] = useState<Lab[]>([]);
+  const [labSearchStatus, setLabSearchStatus] = useState<string | null>(null);
+  const [selectedLab, setSelectedLab] = useState<Lab | null>(null);
+  const [labNote, setLabNote] = useState('');
+  const [labActionStatus, setLabActionStatus] = useState<string | null>(null);
+  const [labSaving, setLabSaving] = useState(false);
 
   const [issueKey, setIssueKey] = useState('');
   const [medication, setMedication] = useState('');
@@ -95,6 +114,7 @@ export default function PatientDetail() {
       setPatient(data.patient);
       setNotes(data.notes);
       setAppointments(data.appointments);
+      setLabs(data.labs);
       setEditForm({
         name: data.patient.name,
         dob: data.patient.dob ?? '',
@@ -118,14 +138,15 @@ export default function PatientDetail() {
     let ignore = false;
     if (!needLab) {
       setLabResults([]);
-      setLabStatus(null);
+      setLabSearchStatus(null);
+      setSelectedLab(null);
       return () => { ignore = true; };
     }
     if (!patient?.address) {
-      setLabStatus('Add the patient address to fetch nearby labs.');
+      setLabSearchStatus('Add the patient address to fetch nearby labs.');
       return () => { ignore = true; };
     }
-    setLabStatus('Searching labs…');
+    setLabSearchStatus('Searching labs…');
     const params = new URLSearchParams({ address: patient.address, test: labTest });
     (async () => {
       try {
@@ -134,12 +155,13 @@ export default function PatientDetail() {
         const data = await getJson<LabsRes>(res);
         if (!ignore) {
           setLabResults(data.labs);
-          setLabStatus(data.labs.length ? null : 'No labs found.');
+          setSelectedLab(data.labs[0] ?? null);
+          setLabSearchStatus(data.labs.length ? null : 'No labs found.');
         }
       } catch {
         if (!ignore) {
           setLabResults([]);
-          setLabStatus('No labs found.');
+          setLabSearchStatus('No labs found.');
         }
       }
     })();
@@ -188,6 +210,50 @@ export default function PatientDetail() {
       setNoteStatus('Note added.');
     } catch (err: any) {
       setNoteStatus(err?.message || 'Could not add note');
+    }
+  }
+
+  async function handleCreateLabOrder() {
+    if (!patient || !selectedLab) {
+      setLabActionStatus('Select a lab to create an order.');
+      return;
+    }
+    setLabSaving(true);
+    setLabActionStatus(null);
+    try {
+      const res = await apiFetch('/api/lab-orders', {
+        method: 'POST',
+        json: {
+          patientId: patient.id,
+          test: labTest,
+          labName: selectedLab.name,
+          labCity: selectedLab.city,
+          notes: labNote.trim() || undefined,
+        },
+      });
+      const info = await res.json();
+      if (!res.ok) throw new Error(info?.error || 'Could not create lab order');
+      setLabActionStatus('Lab order created.');
+      setLabNote('');
+      setNeedLab(false);
+      await fetchDetail();
+    } catch (err: any) {
+      setLabActionStatus(err?.message || 'Could not create lab order');
+    } finally {
+      setLabSaving(false);
+    }
+  }
+
+  async function handleLabStatusChange(orderId: number, status: string) {
+    try {
+      const res = await apiFetch(`/api/lab-orders/${orderId}`, { method: 'PATCH', json: { status } });
+      if (!res.ok) {
+        const info = await res.json();
+        throw new Error(info?.error || 'Unable to update lab order');
+      }
+      await fetchDetail();
+    } catch (err) {
+      console.error(err);
     }
   }
 
@@ -355,7 +421,7 @@ export default function PatientDetail() {
                 <input type="checkbox" checked={needLab} onChange={(e) => setNeedLab(e.target.checked)} /> Need lab?
               </label>
             </div>
-            {needLab && (
+            {needLab ? (
               <>
                 <label className="text-sm">
                   <span className="font-medium">Test</span>
@@ -365,21 +431,51 @@ export default function PatientDetail() {
                     ))}
                   </select>
                 </label>
-                {labStatus && <p className="text-xs text-slate-500">{labStatus}</p>}
-                {!labStatus && labResults.length > 0 && (
-                  <ul className="space-y-2 text-sm">
+                {labSearchStatus && <p className="text-xs text-slate-500">{labSearchStatus}</p>}
+                {!labSearchStatus && labResults.length > 0 && (
+                  <div className="space-y-2 max-h-40 overflow-auto">
                     {labResults.map((lab) => (
-                      <li key={lab.name} className="border border-slate-200 rounded-lg p-3">
-                        <p className="font-medium text-[#122E3A]">{lab.name}</p>
-                        <p className="text-xs text-slate-500">{lab.city}</p>
-                        <p className="text-xs">Tests: {lab.tests.join(', ')}</p>
-                      </li>
+                      <label key={lab.name} className={`flex items-start gap-2 border rounded-lg px-2 py-2 text-xs ${selectedLab?.name === lab.name ? 'border-[#1AA898] bg-[#1AA898]/5' : 'border-slate-200'}`}>
+                        <input type="radio" name="patient-lab-choice" checked={selectedLab?.name === lab.name} onChange={() => setSelectedLab(lab)} />
+                        <span>
+                          <span className="font-semibold text-slate-700">{lab.name}</span>
+                          <span className="block text-slate-500">{lab.city} · {lab.tests.join(', ')}</span>
+                        </span>
+                      </label>
                     ))}
-                  </ul>
+                  </div>
                 )}
+                <textarea className="w-full" rows={2} placeholder="Special instructions" value={labNote} onChange={(e) => setLabNote(e.target.value)} />
+                {labActionStatus && <p className="text-xs text-slate-500">{labActionStatus}</p>}
+                <button type="button" disabled={labSaving} className="btn btn-primary px-4 py-2" onClick={handleCreateLabOrder}>
+                  {labSaving ? 'Booking…' : 'Create lab order'}
+                </button>
               </>
+            ) : (
+              <p className="text-sm text-slate-500">Toggle on when a lab requisition is needed.</p>
             )}
-            {!needLab && <p className="text-sm text-slate-500">Toggle on when a lab requisition is needed.</p>}
+
+            {labs.length > 0 && (
+              <div className="border-t border-slate-200 pt-3 space-y-2">
+                <h3 className="font-semibold text-sm">Existing lab orders</h3>
+                {labs.map((order) => (
+                  <div key={order.id} className="border border-slate-200 rounded-lg p-3 text-sm">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="font-medium text-[#122E3A]">{order.test}</p>
+                        <p className="text-xs text-slate-500">{order.labName || 'Lab TBD'} · {order.status}</p>
+                      </div>
+                      <select className="text-xs" value={order.status} onChange={(e) => handleLabStatusChange(order.id, e.target.value)}>
+                        {LAB_STATUS_OPTIONS.map((status) => (
+                          <option key={status} value={status}>{status}</option>
+                        ))}
+                      </select>
+                    </div>
+                    {order.notes && <p className="text-xs text-slate-500 mt-1">Notes: {order.notes}</p>}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           <div className="bg-white rounded-lg border border-slate-200 p-5 space-y-3">
@@ -405,7 +501,7 @@ export default function PatientDetail() {
             )}
             {issueKey && (
               <div className="text-xs text-slate-500">
-                Document this plan via “New Note” to capture into the chart.
+                Document this plan via “New Note” to capture it in the chart.
               </div>
             )}
           </div>

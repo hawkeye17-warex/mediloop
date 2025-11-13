@@ -63,6 +63,50 @@ CREATE TABLE IF NOT EXISTS sessions (
   created_at INTEGER NOT NULL,
   FOREIGN KEY(user_id) REFERENCES users(id)
 );
+CREATE TABLE IF NOT EXISTS patients (
+  id TEXT PRIMARY KEY,
+  user_id INTEGER NOT NULL,
+  name TEXT NOT NULL,
+  dob TEXT,
+  gender TEXT,
+  phone TEXT,
+  email TEXT,
+  address TEXT,
+  created_at INTEGER NOT NULL,
+  FOREIGN KEY(user_id) REFERENCES users(id)
+);
+CREATE TABLE IF NOT EXISTS patient_notes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  patient_id TEXT NOT NULL,
+  user_id INTEGER NOT NULL,
+  content TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  FOREIGN KEY(patient_id) REFERENCES patients(id),
+  FOREIGN KEY(user_id) REFERENCES users(id)
+);
+CREATE TABLE IF NOT EXISTS appointments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  patient_id TEXT NOT NULL,
+  user_id INTEGER NOT NULL,
+  start_ts INTEGER NOT NULL,
+  reason TEXT,
+  created_at INTEGER NOT NULL,
+  FOREIGN KEY(patient_id) REFERENCES patients(id),
+  FOREIGN KEY(user_id) REFERENCES users(id)
+);
+CREATE TABLE IF NOT EXISTS lab_orders (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  patient_id TEXT NOT NULL,
+  user_id INTEGER NOT NULL,
+  test TEXT NOT NULL,
+  lab_name TEXT,
+  lab_city TEXT,
+  status TEXT DEFAULT 'requested',
+  notes TEXT,
+  created_at INTEGER NOT NULL,
+  FOREIGN KEY(patient_id) REFERENCES patients(id),
+  FOREIGN KEY(user_id) REFERENCES users(id)
+);
 `);
 
 const SQL = {
@@ -75,6 +119,19 @@ const SQL = {
   deleteSessionByHash: db.prepare('DELETE FROM sessions WHERE token_hash = ?'),
   clearUserSecrets: db.prepare('UPDATE users SET totp_enabled = 0, totp_secret_encrypted = NULL, totp_temp_secret_encrypted = NULL WHERE id = ?'),
   deleteSessionsForUser: db.prepare('DELETE FROM sessions WHERE user_id = ?'),
+  listPatients: db.prepare('SELECT id, name, dob, gender, phone, email, address, created_at FROM patients WHERE user_id = ? ORDER BY created_at DESC LIMIT 200'),
+  insertPatient: db.prepare('INSERT INTO patients (id, user_id, name, dob, gender, phone, email, address, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'),
+  getPatientById: db.prepare('SELECT * FROM patients WHERE id = ? AND user_id = ?'),
+  updatePatient: db.prepare('UPDATE patients SET name = ?, dob = ?, gender = ?, phone = ?, email = ?, address = ? WHERE id = ? AND user_id = ?'),
+  listNotesForPatient: db.prepare('SELECT id, patient_id, content, created_at FROM patient_notes WHERE patient_id = ? AND user_id = ? ORDER BY created_at DESC LIMIT 200'),
+  insertNote: db.prepare('INSERT INTO patient_notes (patient_id, user_id, content, created_at) VALUES (?, ?, ?, ?)'),
+  listAppointmentsUpcoming: db.prepare(`SELECT a.id, a.patient_id, a.start_ts, a.reason, p.name AS patient_name FROM appointments a JOIN patients p ON p.id = a.patient_id AND p.user_id = a.user_id WHERE a.user_id = ? AND a.start_ts >= ? ORDER BY a.start_ts ASC LIMIT 200`),
+  listAppointmentsForPatient: db.prepare('SELECT id, patient_id, start_ts, reason FROM appointments WHERE patient_id = ? AND user_id = ? ORDER BY start_ts DESC LIMIT 200'),
+  insertAppointment: db.prepare('INSERT INTO appointments (patient_id, user_id, start_ts, reason, created_at) VALUES (?, ?, ?, ?, ?)'),
+  listLabOrdersForPatient: db.prepare('SELECT id, patient_id, test, lab_name, lab_city, status, notes, created_at FROM lab_orders WHERE patient_id = ? AND user_id = ? ORDER BY created_at DESC LIMIT 200'),
+  insertLabOrder: db.prepare('INSERT INTO lab_orders (patient_id, user_id, test, lab_name, lab_city, status, notes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'),
+  listLabOrders: db.prepare('SELECT id, patient_id, test, lab_name, lab_city, status, notes, created_at FROM lab_orders WHERE user_id = ? ORDER BY created_at DESC LIMIT 200'),
+  updateLabOrder: db.prepare('UPDATE lab_orders SET status = ?, notes = ? WHERE id = ? AND user_id = ?'),
   // Utilities for password column (prepared later on demand)
 };
 
@@ -313,7 +370,7 @@ app.post('/api/auth/admin/reset-user', (req, res) => {
   return res.json({ ok: true });
 });
 
-// ---------------------- App data API (minimal store) ----------------------
+// ---------------------- App data API (DB-backed) ----------------------
 function requireAuthApi(req, res, next) {
   const token = req.cookies[SESSION_COOKIE];
   if (!token) return res.status(401).json({ error: 'unauthorized' });
@@ -323,73 +380,120 @@ function requireAuthApi(req, res, next) {
   next();
 }
 
-// In-memory store (kept simple for demo; replace with DB later)
-const STORE = { patients: [], notes: [], appts: [] };
+const LABS = [
+  { name: 'Prairie Labs - Downtown', city: 'Winnipeg', tests: ['Bloodwork', 'MRI', 'X-Ray'] },
+  { name: 'HealthPlus Labs', city: 'Winnipeg', tests: ['Bloodwork'] },
+  { name: 'Lakeview Diagnostics', city: 'Brandon', tests: ['Bloodwork', 'Ultrasound'] },
+  { name: 'Broadway Imaging', city: 'Toronto', tests: ['MRI', 'CT'] },
+  { name: 'Harbour Labs', city: 'Vancouver', tests: ['Bloodwork', 'X-Ray'] },
+];
+
+const formatPatient = (row) => ({
+  id: row.id,
+  name: row.name,
+  dob: row.dob,
+  gender: row.gender,
+  phone: row.phone,
+  email: row.email,
+  address: row.address,
+  createdAt: row.created_at,
+});
+const formatNote = (row) => ({ id: row.id, patientId: row.patient_id, content: row.content, createdAt: row.created_at });
+const formatAppointment = (row) => ({
+  id: row.id,
+  patientId: row.patient_id,
+  startTs: row.start_ts,
+  reason: row.reason,
+  patient: row.patient_name ? { id: row.patient_id, name: row.patient_name } : undefined,
+});
+const formatLabOrder = (row) => ({
+  id: row.id,
+  patientId: row.patient_id,
+  test: row.test,
+  labName: row.lab_name,
+  labCity: row.lab_city,
+  status: row.status,
+  notes: row.notes,
+  createdAt: row.created_at,
+});
 
 // Patients
 app.get('/api/patients', requireAuthApi, (req, res) => {
-  const patients = STORE.patients.filter(p => p.userId === req.userId).slice(-200).reverse();
-  res.json({ patients });
+  const rows = SQL.listPatients.all(req.userId);
+  res.json({ patients: rows.map(formatPatient) });
 });
 
 app.post('/api/patients', requireAuthApi, (req, res) => {
   const { name, dob, gender, phone, email, address } = req.body || {};
   if (!name) return res.status(400).json({ error: 'name_required' });
   const id = crypto.randomBytes(6).toString('hex');
-  STORE.patients.push({ id, userId: req.userId, name, dob, gender, phone, email, address, createdAt: nowS() });
+  SQL.insertPatient.run(id, req.userId, name, dob || null, gender || null, phone || null, email || null, address || null, nowS());
   res.json({ id });
 });
 
 app.get('/api/patients/:id', requireAuthApi, (req, res) => {
-  const p = STORE.patients.find(x => x.id === req.params.id && x.userId === req.userId);
-  if (!p) return res.status(404).json({ error: 'not_found' });
-  const notes = STORE.notes.filter(n => n.patientId === p.id).sort((a,b)=>b.createdAt-a.createdAt);
-  const appointments = STORE.appts.filter(a => a.patientId === p.id).sort((a,b)=>b.startTs-a.startTs);
-  res.json({ patient: p, notes, appointments });
+  const patientRow = SQL.getPatientById.get(req.params.id, req.userId);
+  if (!patientRow) return res.status(404).json({ error: 'not_found' });
+  const patient = formatPatient(patientRow);
+  const notes = SQL.listNotesForPatient.all(patient.id, req.userId).map(formatNote);
+  const appointments = SQL.listAppointmentsForPatient.all(patient.id, req.userId).map((row) => ({ id: row.id, patientId: row.patient_id, startTs: row.start_ts, reason: row.reason }));
+  const labs = SQL.listLabOrdersForPatient.all(patient.id, req.userId).map(formatLabOrder);
+  res.json({ patient, notes, appointments, labs });
 });
 
 app.put('/api/patients/:id', requireAuthApi, (req, res) => {
-  const p = STORE.patients.find(x => x.id === req.params.id && x.userId === req.userId);
-  if (!p) return res.status(404).json({ error: 'not_found' });
+  const existing = SQL.getPatientById.get(req.params.id, req.userId);
+  if (!existing) return res.status(404).json({ error: 'not_found' });
   const { name, dob, gender, phone, email, address } = req.body || {};
-  Object.assign(p, { name: name ?? p.name, dob: dob ?? p.dob, gender: gender ?? p.gender, phone: phone ?? p.phone, email: email ?? p.email, address: address ?? p.address });
+  SQL.updatePatient.run(
+    name ?? existing.name,
+    dob ?? existing.dob,
+    gender ?? existing.gender,
+    phone ?? existing.phone,
+    email ?? existing.email,
+    address ?? existing.address,
+    existing.id,
+    req.userId,
+  );
   res.json({ ok: true });
 });
 
 app.post('/api/patients/:id/notes', requireAuthApi, (req, res) => {
-  const p = STORE.patients.find(x => x.id === req.params.id && x.userId === req.userId);
-  if (!p) return res.status(404).json({ error: 'not_found' });
+  const patientRow = SQL.getPatientById.get(req.params.id, req.userId);
+  if (!patientRow) return res.status(404).json({ error: 'not_found' });
   const { content } = req.body || {};
   if (!content) return res.status(400).json({ error: 'content_required' });
-  STORE.notes.push({ id: STORE.notes.length + 1, patientId: p.id, content, createdAt: nowS() });
+  SQL.insertNote.run(patientRow.id, req.userId, content, nowS());
   res.json({ ok: true });
 });
 
 // Appointments
 app.get('/api/appointments/upcoming', requireAuthApi, (req, res) => {
-  const now = nowS();
-  const appts = STORE.appts.filter(a => a.startTs >= now && STORE.patients.some(p => p.id === a.patientId && p.userId === req.userId))
-    .map(a => ({ ...a, patient: STORE.patients.find(p => p.id === a.patientId) }))
-    .sort((a,b)=>a.startTs-b.startTs)
-    .slice(0, 200);
-  res.json({ appointments: appts });
+  const rows = SQL.listAppointmentsUpcoming.all(req.userId, nowS());
+  res.json({ appointments: rows.map(formatAppointment) });
 });
 
 app.post('/api/appointments', requireAuthApi, (req, res) => {
-  const { patientId, startTs, reason } = req.body || {};
-  const p = STORE.patients.find(x => x.id === patientId && x.userId === req.userId);
-  if (!p) return res.status(400).json({ error: 'invalid_patient' });
+  const { patientId, startTs, reason, labOrder, noteContent } = req.body || {};
+  if (!patientId) return res.status(400).json({ error: 'patient_required' });
+  const patientRow = SQL.getPatientById.get(patientId, req.userId);
+  if (!patientRow) return res.status(400).json({ error: 'invalid_patient' });
   if (!startTs) return res.status(400).json({ error: 'start_ts_required' });
-  STORE.appts.push({ id: STORE.appts.length + 1, patientId, startTs: Number(startTs), reason: reason || '', createdAt: nowS() });
-  res.json({ ok: true });
+  const start = Number(startTs);
+  const apptInfo = SQL.insertAppointment.run(patientRow.id, req.userId, start, reason || '', nowS());
+  let labOrderId = null;
+  if (labOrder?.test) {
+    const { test, labName, labCity, status, notes } = labOrder;
+    const labInfo = SQL.insertLabOrder.run(patientRow.id, req.userId, test, labName || null, labCity || null, status || 'requested', notes || null, nowS());
+    labOrderId = labInfo.lastInsertRowid;
+  }
+  if (noteContent) {
+    SQL.insertNote.run(patientRow.id, req.userId, noteContent, nowS());
+  }
+  res.json({ ok: true, appointmentId: apptInfo.lastInsertRowid, labOrderId });
 });
 
-// Labs (city match)
-const LABS = [
-  { name: 'Prairie Labs - Downtown', city: 'Winnipeg', tests: ['Bloodwork', 'MRI', 'X-Ray'] },
-  { name: 'HealthPlus Labs', city: 'Winnipeg', tests: ['Bloodwork'] },
-  { name: 'Lakeview Diagnostics', city: 'Brandon', tests: ['Bloodwork', 'Ultrasound'] },
-];
+// Lab order management + directory
 app.get('/api/labs/nearby', requireAuthApi, (req, res) => {
   const address = String(req.query.address || '');
   const test = String(req.query.test || '');
@@ -397,6 +501,28 @@ app.get('/api/labs/nearby', requireAuthApi, (req, res) => {
   let results = LABS.filter(l => (!test || l.tests.includes(test)) && (!city || l.city.toLowerCase() === city.toLowerCase()));
   if (results.length === 0) results = LABS.filter(l => !test || l.tests.includes(test));
   res.json({ labs: results.slice(0,5) });
+});
+
+app.get('/api/lab-orders', requireAuthApi, (req, res) => {
+  const rows = SQL.listLabOrders.all(req.userId);
+  res.json({ labOrders: rows.map(formatLabOrder) });
+});
+
+app.post('/api/lab-orders', requireAuthApi, (req, res) => {
+  const { patientId, test, labName, labCity, status, notes } = req.body || {};
+  if (!patientId || !test) return res.status(400).json({ error: 'invalid_payload' });
+  const patientRow = SQL.getPatientById.get(patientId, req.userId);
+  if (!patientRow) return res.status(400).json({ error: 'invalid_patient' });
+  const info = SQL.insertLabOrder.run(patientRow.id, req.userId, test, labName || null, labCity || null, status || 'requested', notes || null, nowS());
+  res.json({ id: info.lastInsertRowid });
+});
+
+app.patch('/api/lab-orders/:id', requireAuthApi, (req, res) => {
+  const { status, notes } = req.body || {};
+  if (!status) return res.status(400).json({ error: 'status_required' });
+  const info = SQL.updateLabOrder.run(status, notes ?? null, Number(req.params.id), req.userId);
+  if (!info.changes) return res.status(404).json({ error: 'not_found' });
+  res.json({ ok: true });
 });
 
 app.listen(PORT, () => {
