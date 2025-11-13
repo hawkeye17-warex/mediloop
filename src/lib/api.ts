@@ -1,9 +1,13 @@
-export const API_BASE = import.meta.env.VITE_API_URL || '';
+const RAW_BASE = import.meta.env.VITE_API_URL || '';
+const NORMALIZED_BASE = RAW_BASE.replace(/\/+$/, '');
+
+export const API_BASE = NORMALIZED_BASE;
 
 type Options = RequestInit & { json?: unknown };
 
 export async function apiFetch(path: string, opts: Options = {}) {
-  const url = API_BASE ? `${API_BASE}${path}` : path;
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+  const url = API_BASE ? `${API_BASE}${normalizedPath}` : path;
   const headers = new Headers(opts.headers || {});
   if (opts.json !== undefined) headers.set('Content-Type', 'application/json');
   const res = await fetch(url, {
@@ -23,4 +27,3 @@ export async function getJson<T>(res: Response): Promise<T> {
   }
   return (await res.json()) as T;
 }
-
