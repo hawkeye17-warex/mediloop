@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { FormEvent } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
-import { apiFetch, getJson, API_BASE } from '../lib/api';
+import { useCallback, useEffect, useState } from "react";
+import type { FormEvent } from "react";
+import { useNavigate, useParams } from "react-router-dom";
+import { apiFetch, getJson, API_BASE } from "../lib/api";
 
 type Me = { user: { email: string } | null };
 
@@ -16,64 +16,27 @@ type Patient = {
   createdAt: number;
 };
 
-type NoteSoap = {
-  subjective?: string | null;
-  objective?: string | null;
-  assessment?: string | null;
-  plan?: string | null;
-};
-
-type Note = {
-  id: number;
-  patientId: string;
-  content?: string | null;
-  soap?: NoteSoap;
-  attachments: string[];
-  createdAt: number;
-};
-
-type ApiNote = Omit<Note, 'attachments' | 'soap'> & { attachments?: string[]; soap?: NoteSoap };
+type Note = { id: number; patientId: string; content?: string | null; createdAt: number };
 
 type Appointment = { id: number; patientId: string; startTs: number; reason?: string | null };
 
-type FileItem = { id: string; filename: string; mime?: string | null; size?: number | null; createdAt: number };
+type LabOrder = { id: number; patientId: string; test: string; status: string; createdAt: number };
 
-type LabOrder = {
-  id: number;
-  patientId: string;
-  test: string;
-  labName?: string | null;
-  labCity?: string | null;
-  status: string;
-  notes?: string | null;
-  createdAt: number;
-};
+type FileItem = { id: string; filename: string; createdAt: number };
 
 type PatientDetailRes = {
   patient: Patient;
-  notes: ApiNote[];
+  notes: Note[];
   appointments: Appointment[];
   labs?: LabOrder[];
   files?: FileItem[];
 };
 
-type Lab = { name: string; city: string; tests: string[] };
-type LabsRes = { labs: Lab[] };
-
-const LAB_TESTS = ['Bloodwork', 'MRI', 'X-Ray', 'Ultrasound'];
-const LAB_STATUS_OPTIONS = ['requested', 'scheduled', 'completed', 'cancelled'] as const;
-const ISSUE_MEDICATIONS: Record<string, string[]> = {
-  Hypertension: ['Lisinopril', 'Amlodipine', 'Losartan'],
-  'Type 2 Diabetes': ['Metformin', 'Empagliflozin', 'Semaglutide'],
-  'Chronic Pain': ['Gabapentin', 'Duloxetine', 'Tramadol'],
-  Anxiety: ['Sertraline', 'Buspirone', 'Escitalopram'],
-  'Respiratory Infection': ['Azithromycin', 'Amoxicillin', 'Levofloxacin'],
-};
-
-const emptySoap: NoteSoap = { subjective: '', objective: '', assessment: '', plan: '' };
+const formatDate = (ts: number) => new Date(ts * 1000).toLocaleDateString();
+const formatTime = (ts: number) => new Date(ts * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
 export default function PatientDetail() {
-  const { id = '' } = useParams();
+  const { id = "" } = useParams();
   const navigate = useNavigate();
 
   const [me, setMe] = useState<string | null>(null);
@@ -87,37 +50,14 @@ export default function PatientDetail() {
 
   const [detailLoading, setDetailLoading] = useState(true);
   const [detailError, setDetailError] = useState<string | null>(null);
-
-  const [editing, setEditing] = useState(false);
-  const [editForm, setEditForm] = useState({ name: '', dob: '', gender: 'Female', phone: '', email: '', address: '' });
-  const [editStatus, setEditStatus] = useState<string | null>(null);
-
-  const [showNoteForm, setShowNoteForm] = useState(false);
-  const [noteText, setNoteText] = useState('');
-  const [noteSoap, setNoteSoap] = useState(emptySoap);
-  const [noteAttachments, setNoteAttachments] = useState<string[]>([]);
+  const [noteText, setNoteText] = useState("");
   const [noteStatus, setNoteStatus] = useState<string | null>(null);
-
-  const [needLab, setNeedLab] = useState(false);
-  const [labTest, setLabTest] = useState(LAB_TESTS[0]);
-  const [labResults, setLabResults] = useState<Lab[]>([]);
-  const [labSearchStatus, setLabSearchStatus] = useState<string | null>(null);
-  const [selectedLab, setSelectedLab] = useState<Lab | null>(null);
-  const [labNote, setLabNote] = useState('');
-  const [labActionStatus, setLabActionStatus] = useState<string | null>(null);
-  const [labSaving, setLabSaving] = useState(false);
-
-  const [issueKey, setIssueKey] = useState('');
-  const [medication, setMedication] = useState('');
-
-  const [fileUploadStatus, setFileUploadStatus] = useState<string | null>(null);
-  const [fileUploading, setFileUploading] = useState(false);
 
   useEffect(() => {
     let ignore = false;
     (async () => {
       try {
-        const res = await apiFetch('/api/auth/me');
+        const res = await apiFetch("/api/auth/me");
         const data = await getJson<Me>(res);
         if (!ignore) setMe(data.user?.email ?? null);
       } catch (err) {
@@ -126,52 +66,41 @@ export default function PatientDetail() {
         if (!ignore) setAuthLoading(false);
       }
     })();
-    return () => { ignore = true; };
+    return () => {
+      ignore = true;
+    };
   }, []);
 
   useEffect(() => {
-    if (!authLoading && !me) navigate('/login');
+    if (!authLoading && !me) navigate("/login");
   }, [authLoading, me, navigate]);
 
-  const fetchDetail = useCallback(async () => {
+  const loadDetail = useCallback(async () => {
     if (!id) return;
     setDetailLoading(true);
     setDetailError(null);
     try {
       const res = await apiFetch(`/api/patients/${id}`);
       if (res.status === 401) {
-        navigate('/login');
+        navigate("/login");
         return;
       }
       if (res.status === 404) {
-        setDetailError('Patient not found');
+        setDetailError("Patient not found");
         return;
       }
       if (!res.ok) {
         const info = await res.json().catch(() => null);
-        throw new Error(info?.error || 'Could not load patient');
+        throw new Error(info?.error || "Unable to load patient");
       }
       const data = await getJson<PatientDetailRes>(res);
-      const normalizedNotes: Note[] = (data.notes || []).map((note) => ({
-        ...note,
-        soap: note.soap ?? {},
-        attachments: note.attachments ?? [],
-      }));
       setPatient(data.patient);
-      setNotes(normalizedNotes);
-      setAppointments(data.appointments);
-      setLabs(data.labs ?? []);
-      setFiles(data.files ?? []);
-      setEditForm({
-        name: data.patient.name,
-        dob: data.patient.dob ?? '',
-        gender: data.patient.gender ?? 'Female',
-        phone: data.patient.phone ?? '',
-        email: data.patient.email ?? '',
-        address: data.patient.address ?? '',
-      });
+      setNotes(data.notes || []);
+      setAppointments(data.appointments || []);
+      setLabs(data.labs || []);
+      setFiles(data.files || []);
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Could not load patient';
+      const message = err instanceof Error ? err.message : "Unable to load patient";
       setDetailError(message);
     } finally {
       setDetailLoading(false);
@@ -179,154 +108,194 @@ export default function PatientDetail() {
   }, [id, navigate]);
 
   useEffect(() => {
-    if (me) fetchDetail();
-  }, [me, fetchDetail]);
-
-  useEffect(() => {
-    let ignore = false;
-    if (!needLab) {
-      setLabResults([]);
-      setLabSearchStatus(null);
-      setSelectedLab(null);
-      return;
-    }
-    if (!patient?.address) {
-      setLabSearchStatus('Add the patient address to fetch nearby labs.');
-      return;
-    }
-    setLabSearchStatus('Searching labs...');
-    const params = new URLSearchParams({ address: patient.address || '', test: labTest });
-    (async () => {
-      try {
-        const res = await apiFetch(`/api/labs/nearby?${params.toString()}`);
-        if (!res.ok) throw new Error('lab_error');
-        const data = await getJson<LabsRes>(res);
-        if (!ignore) {
-          setLabResults(data.labs);
-          setSelectedLab(data.labs[0] ?? null);
-          setLabSearchStatus(data.labs.length ? null : 'No labs found.');
-        }
-      } catch {
-        if (!ignore) {
-          setLabResults([]);
-          setLabSearchStatus('No labs found.');
-        }
-      }
-    })();
-    return () => { ignore = true; };
-  }, [needLab, labTest, patient?.address]);
-
-  useEffect(() => {
-    if (!issueKey) {
-      setMedication('');
-      return;
-    }
-    const meds = ISSUE_MEDICATIONS[issueKey] || [];
-    setMedication((prev) => (prev && meds.includes(prev) ? prev : meds[0] ?? ''));
-  }, [issueKey]);
-
-  const issueOptions = useMemo(() => Object.keys(ISSUE_MEDICATIONS), []);
-  const fileMap = useMemo(() => new Map(files.map((f) => [f.id, f])), [files]);
-
-  async function handleEditSubmit(e: FormEvent) {
-    e.preventDefault();
-    if (!patient) return;
-    setEditStatus(null);
-    try {
-      const res = await apiFetch(`/api/patients/${patient.id}`, { method: 'PUT', json: editForm });
-      const info = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(info?.error || 'Could not update patient');
-      setEditStatus('Changes saved.');
-      setEditing(false);
-      await fetchDetail();
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Could not update patient';
-      setEditStatus(message);
-    }
-  }
+    if (me) loadDetail();
+  }, [me, loadDetail]);
 
   async function handleAddNote(e: FormEvent) {
     e.preventDefault();
     if (!patient) return;
-    if (
-      !noteText.trim() &&
-      !noteSoap.subjective &&
-      !noteSoap.objective &&
-      !noteSoap.assessment &&
-      !noteSoap.plan
-    ) {
-      setNoteStatus('Add text in at least one SOAP field.');
+    if (!noteText.trim()) {
+      setNoteStatus("Write a note before saving.");
       return;
     }
     setNoteStatus(null);
     try {
       const res = await apiFetch(`/api/patients/${patient.id}/notes`, {
-        method: 'POST',
-        json: {
-          content: noteText.trim() || undefined,
-          soapSubjective: noteSoap.subjective || undefined,
-          soapObjective: noteSoap.objective || undefined,
-          soapAssessment: noteSoap.assessment || undefined,
-          soapPlan: noteSoap.plan || undefined,
-          attachments: noteAttachments,
-        },
+        method: "POST",
+        json: { content: noteText.trim() },
       });
-      const info = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(info?.error || 'Could not add note');
-      setNoteText('');
-      setNoteSoap(emptySoap);
-      setNoteAttachments([]);
-      setShowNoteForm(false);
-      setNoteStatus('Note added.');
-      await fetchDetail();
+      if (!res.ok) {
+        const info = await res.json().catch(() => null);
+        throw new Error(info?.error || "Could not add note");
+      }
+      setNoteText("");
+      await loadDetail();
+      setNoteStatus("Note added.");
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Could not add note';
+      const message = err instanceof Error ? err.message : "Could not add note";
       setNoteStatus(message);
     }
   }
 
-  async function handleUploadFiles(list: FileList | null) {
-    if (!patient || !list || list.length === 0) return;
-    setFileUploading(true);
-    setFileUploadStatus('Uploading files...');
-    try {
-      for (const file of Array.from(list)) {
-        const dataUrl = await fileToDataUrl(file);
-        const res = await apiFetch(`/api/patients/${patient.id}/files`, {
-          method: 'POST',
-          json: { filename: file.name, dataUrl },
-        });
-        const info = await res.json().catch(() => null);
-        if (!res.ok) throw new Error(info?.error || 'Upload failed');
-      }
-      setFileUploadStatus('Uploaded successfully.');
-      await fetchDetail();
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Upload failed';
-      setFileUploadStatus(message);
-    } finally {
-      setFileUploading(false);
-      setTimeout(() => setFileUploadStatus(null), 3000);
-    }
+  if (authLoading || detailLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center text-slate-600">
+        Loading patient...
+      </div>
+    );
   }
 
-  async function handleCreateLabOrder() {
-    if (!patient || !selectedLab) {
-      setLabActionStatus('Select a lab to create an order.');
-      return;
-    }
-    setLabActionStatus(null);
-    setLabSaving(true);
-    try {
-      const res = await apiFetch('/api/lab-orders', {
-        method: 'POST',
-        json: {
-          patientId: patient.id,
-          test: labTest,
-          labName: selectedLab.name,
-          labCity: selectedLab.city,
-          notes: labNote.trim() || undefined,
-        },
-      });
-      const info = await res.json().catch(() => null);
-      if (!res.ok) throw an Error(info?.error || 'Could not create lab order');
+  if (detailError || !patient) {
+    return (
+      <div className="min-h-screen flex items-center justify-center text-slate-600">
+        <div className="bg-white border border-slate-200 rounded-lg p-8 text-center space-y-3">
+          <p className="text-lg font-semibold">{detailError ?? "Patient not found"}</p>
+          <button onClick={() => navigate("/dashboard")} className="text-[#1AA898] underline text-sm">
+            Back to dashboard
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-slate-50 text-slate-800">
+      <header className="sticky top-0 z-30 bg-white/90 border-b border-slate-200">
+        <div className="max-w-5xl mx-auto px-4 h-14 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <button onClick={() => navigate(-1)} className="text-slate-600 hover:text-slate-900">
+              ? Back
+            </button>
+            <div className="font-semibold">Patient chart</div>
+          </div>
+          <div className="text-xs text-slate-500">Signed in as {me}</div>
+        </div>
+      </header>
+
+      <main className="max-w-5xl mx-auto px-4 md:px-6 py-6 space-y-6">
+        <section className="bg-white border border-slate-200 rounded-lg p-5">
+          <div className="flex items-center justify-between">
+            <div>
+              <h1 className="text-2xl font-bold">{patient.name}</h1>
+              <p className="text-sm text-slate-500">
+                DOB {patient.dob || "-"} · {patient.gender || "-"}
+              </p>
+            </div>
+            <button className="text-sm text-[#1AA898] underline" onClick={() => navigate('/dashboard')}>
+              Dashboard
+            </button>
+          </div>
+          <div className="grid md:grid-cols-3 gap-4 mt-4 text-sm text-slate-600">
+            <div>
+              <p className="text-xs text-slate-500">Phone</p>
+              <p>{patient.phone || '—'}</p>
+            </div>
+            <div>
+              <p className="text-xs text-slate-500">Email</p>
+              <p>{patient.email || '—'}</p>
+            </div>
+            <div>
+              <p className="text-xs text-slate-500">Address</p>
+              <p>{patient.address || '—'}</p>
+            </div>
+          </div>
+        </section>
+
+        <section className="bg-white border border-slate-200 rounded-lg p-5 space-y-3">
+          <div className="flex items-center justify-between">
+            <h2 className="font-semibold">Notes</h2>
+            <span className="text-xs text-slate-500">{notes.length} entries</span>
+          </div>
+          {notes.length === 0 ? (
+            <p className="text-sm text-slate-500">No notes yet.</p>
+          ) : (
+            <ul className="space-y-3 text-sm">
+              {notes.map((note) => (
+                <li key={note.id} className="border border-slate-200 rounded-lg p-3">
+                  <p className="text-xs text-slate-500">{new Date(note.createdAt * 1000).toLocaleString()}</p>
+                  <p>{note.content || '—'}</p>
+                </li>
+              ))}
+            </ul>
+          )}
+          <form className="space-y-2" onSubmit={handleAddNote}>
+            <textarea
+              className="w-full border border-slate-300 rounded-md p-2"
+              rows={3}
+              placeholder="Add a quick note..."
+              value={noteText}
+              onChange={(e) => setNoteText(e.target.value)}
+            />
+            {noteStatus && <p className="text-xs text-slate-500">{noteStatus}</p>}
+            <button type="submit" className="btn btn-primary px-4 py-2">Save note</button>
+          </form>
+        </section>
+
+        <section className="bg-white border border-slate-200 rounded-lg p-5 space-y-3">
+          <div className="flex items-center justify-between">
+            <h2 className="font-semibold">Appointments</h2>
+            <span className="text-xs text-slate-500">{appointments.length}</span>
+          </div>
+          {appointments.length === 0 ? (
+            <p className="text-sm text-slate-500">No visits recorded.</p>
+          ) : (
+            <ul className="space-y-2 text-sm">
+              {appointments.map((appt) => (
+                <li key={appt.id} className="border border-slate-200 rounded-lg p-3 flex items-center justify-between">
+                  <div>
+                    <p className="font-medium text-[#122E3A]">{appt.reason || 'General consult'}</p>
+                    <p className="text-xs text-slate-500">{formatDate(appt.startTs)} · {formatTime(appt.startTs)}</p>
+                  </div>
+                  <span className="text-xs text-slate-500">#{appt.id}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+
+        <section className="bg-white border border-slate-200 rounded-lg p-5 space-y-3">
+          <div className="flex items-center justify-between">
+            <h2 className="font-semibold">Lab orders</h2>
+            <span className="text-xs text-slate-500">{labs.length}</span>
+          </div>
+          {labs.length === 0 ? (
+            <p className="text-sm text-slate-500">No lab orders yet.</p>
+          ) : (
+            <ul className="space-y-2 text-sm">
+              {labs.map((lab) => (
+                <li key={lab.id} className="border border-slate-200 rounded-lg p-3 flex items-center justify-between">
+                  <div>
+                    <p className="font-medium text-[#122E3A]">{lab.test}</p>
+                    <p className="text-xs text-slate-500">Status: {lab.status}</p>
+                  </div>
+                  <span className="text-xs text-slate-500">{formatDate(lab.createdAt)}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+
+        <section className="bg-white border border-slate-200 rounded-lg p-5 space-y-3">
+          <div className="flex items-center justify-between">
+            <h2 className="font-semibold">Files</h2>
+            <span className="text-xs text-slate-500">{files.length}</span>
+          </div>
+          {files.length === 0 ? (
+            <p className="text-sm text-slate-500">No files uploaded.</p>
+          ) : (
+            <ul className="space-y-2 text-sm">
+              {files.map((file) => (
+                <li key={file.id} className="border border-slate-200 rounded-lg px-3 py-2 flex items-center justify-between">
+                  <span>{file.filename}</span>
+                  <a className="text-[#1AA898] text-xs" href={`${API_BASE || ''}/api/files/${file.id}`} target="_blank" rel="noreferrer">
+                    Open
+                  </a>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      </main>
+    </div>
+  );
+}
