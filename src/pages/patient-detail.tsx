@@ -35,7 +35,7 @@ export default function PatientDetail() {
   useEffect(() => {
     (async () => {
       try {
-        const res = await fetch('/api/auth/me', { credentials: 'include' });
+        const res = await (await import('../lib/api')).apiFetch('/api/auth/me');
         const data: Me = await res.json();
         setEmail(data.user?.email ?? null);
       } finally { setLoading(false); }
