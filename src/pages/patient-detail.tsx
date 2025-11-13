@@ -1,137 +1,424 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import type { FormEvent } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { apiFetch, getJson } from '../lib/api';
 
 type Me = { user: { email: string } | null };
 
 type Patient = {
   id: string;
   name: string;
-  dob: string;
-  gender: string;
-  phone: string;
-  email: string;
-  address: string;
-  lastVisit: string;
-  notes: string[];
-  referrals: { to: string; status: 'Pending' | 'Sent' | 'Accepted' }[];
+  dob?: string;
+  gender?: string;
+  phone?: string;
+  email?: string;
+  address?: string;
+  createdAt: number;
 };
 
-const DATA: Patient[] = [
-  { id: 'jenny-wilson', name: 'Jenny Wilson', dob: 'Feb 28, 1988', gender: 'Female', phone: '(204) 555‑0110', email: 'jenny@example.com', address: '12 River St, Winnipeg', lastVisit: '10 days ago', notes: ['Follow‑up for dermatology', 'Allergy to penicillin'], referrals: [{to:'Dermatology', status:'Pending'}] },
-  { id: 'jacob-jones', name: 'Jacob Jones', dob: 'Jun 14, 1972', gender: 'Male', phone: '(204) 555‑0111', email: 'jacob@example.com', address: '89 Main Ave, Winnipeg', lastVisit: '15 days ago', notes: ['Physio recommended', 'Bloodwork normal'], referrals: [{to:'Physiotherapy', status:'Sent'}] },
-  { id: 'kristine-carlson', name: 'Kristine Carlson', dob: 'Nov 3, 1982', gender: 'Female', phone: '(204) 555‑0112', email: 'kristine@example.com', address: '44 Elm Rd, Winnipeg', lastVisit: '25 days ago', notes: ['Dietary advice shared'], referrals: [{to:'Nutrition', status:'Accepted'}] },
-  { id: 'jerome-bell', name: 'Jerome Bell', dob: 'May 5, 1967', gender: 'Male', phone: '(204) 555‑0113', email: 'jerome@example.com', address: '77 Oak Dr, Winnipeg', lastVisit: '2 months ago', notes: ['BP improved'], referrals: [] },
-  { id: 'devon-lane', name: 'Devon Lane', dob: 'Aug 16, 1985', gender: 'Male', phone: '(204) 555‑0114', email: 'devon@example.com', address: '5 Prairie Ct, Winnipeg', lastVisit: '3 months ago', notes: ['MRI scheduled'], referrals: [{to:'Imaging', status:'Pending'}] },
-  { id: 'kathryn-murphy', name: 'Kathryn Murphy', dob: 'Sep 10, 1974', gender: 'Female', phone: '(204) 555‑0115', email: 'kathryn@example.com', address: '901 Lake View, Winnipeg', lastVisit: '4 months ago', notes: ['Cholesterol stable'], referrals: [] },
-];
+type Note = { id: number; patientId: string; content: string; createdAt: number };
+type Appointment = { id: number; patientId: string; startTs: number; reason?: string };
+type PatientDetailRes = { patient: Patient; notes: Note[]; appointments: Appointment[] };
+
+type Lab = { name: string; city: string; tests: string[] };
+type LabsRes = { labs: Lab[] };
+
+const LAB_TESTS = ['Bloodwork', 'MRI', 'X-Ray', 'Ultrasound'];
+const ISSUE_MEDICATIONS: Record<string, string[]> = {
+  Hypertension: ['Lisinopril', 'Amlodipine', 'Losartan'],
+  'Type 2 Diabetes': ['Metformin', 'Empagliflozin', 'Semaglutide'],
+  'Chronic Pain': ['Gabapentin', 'Duloxetine', 'Tramadol'],
+  Anxiety: ['Sertraline', 'Buspirone', 'Escitalopram'],
+  'Respiratory Infection': ['Azithromycin', 'Amoxicillin', 'Levofloxacin'],
+};
 
 export default function PatientDetail() {
-  const { id } = useParams();
-  const [email, setEmail] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const { id = '' } = useParams();
   const navigate = useNavigate();
-  const patient = DATA.find(p => p.id === id);
+
+  const [me, setMe] = useState<string | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+
+  const [patient, setPatient] = useState<Patient | null>(null);
+  const [notes, setNotes] = useState<Note[]>([]);
+  const [appointments, setAppointments] = useState<Appointment[]>([]);
+  const [detailLoading, setDetailLoading] = useState(true);
+  const [detailError, setDetailError] = useState<string | null>(null);
+
+  const [editing, setEditing] = useState(false);
+  const [editForm, setEditForm] = useState({ name: '', dob: '', gender: '', phone: '', email: '', address: '' });
+  const [editStatus, setEditStatus] = useState<string | null>(null);
+
+  const [showNoteForm, setShowNoteForm] = useState(false);
+  const [noteText, setNoteText] = useState('');
+  const [noteStatus, setNoteStatus] = useState<string | null>(null);
+
+  const [needLab, setNeedLab] = useState(false);
+  const [labTest, setLabTest] = useState(LAB_TESTS[0]);
+  const [labStatus, setLabStatus] = useState<string | null>(null);
+  const [labResults, setLabResults] = useState<Lab[]>([]);
+
+  const [issueKey, setIssueKey] = useState('');
+  const [medication, setMedication] = useState('');
 
   useEffect(() => {
+    let ignore = false;
     (async () => {
       try {
-        const res = await (await import('../lib/api')).apiFetch('/api/auth/me');
-        const data: Me = await res.json();
-        setEmail(data.user?.email ?? null);
-      } finally { setLoading(false); }
+        const res = await apiFetch('/api/auth/me');
+        const data = await getJson<Me>(res);
+        if (!ignore) setMe(data.user?.email ?? null);
+      } catch (err) {
+        console.error(err);
+      } finally {
+        if (!ignore) setAuthLoading(false);
+      }
     })();
+    return () => { ignore = true; };
   }, []);
 
-  useEffect(() => { if (!loading && !email) navigate('/login'); }, [loading, email, navigate]);
+  useEffect(() => {
+    if (!authLoading && !me) navigate('/login');
+  }, [authLoading, me, navigate]);
 
-  if (!patient) {
+  const fetchDetail = useCallback(async () => {
+    if (!id) return;
+    setDetailLoading(true);
+    setDetailError(null);
+    try {
+      const res = await apiFetch(`/api/patients/${id}`);
+      if (!res.ok) {
+        const info = await res.json();
+        throw new Error(info?.error || 'Could not load patient');
+      }
+      const data = await getJson<PatientDetailRes>(res);
+      setPatient(data.patient);
+      setNotes(data.notes);
+      setAppointments(data.appointments);
+      setEditForm({
+        name: data.patient.name,
+        dob: data.patient.dob ?? '',
+        gender: data.patient.gender ?? 'Female',
+        phone: data.patient.phone ?? '',
+        email: data.patient.email ?? '',
+        address: data.patient.address ?? '',
+      });
+    } catch (err: any) {
+      setDetailError(err?.message || 'Could not load patient');
+    } finally {
+      setDetailLoading(false);
+    }
+  }, [id]);
+
+  useEffect(() => {
+    if (me) fetchDetail();
+  }, [me, fetchDetail]);
+
+  useEffect(() => {
+    let ignore = false;
+    if (!needLab) {
+      setLabResults([]);
+      setLabStatus(null);
+      return () => { ignore = true; };
+    }
+    if (!patient?.address) {
+      setLabStatus('Add the patient address to fetch nearby labs.');
+      return () => { ignore = true; };
+    }
+    setLabStatus('Searching labs…');
+    const params = new URLSearchParams({ address: patient.address, test: labTest });
+    (async () => {
+      try {
+        const res = await apiFetch(`/api/labs/nearby?${params.toString()}`);
+        if (!res.ok) throw new Error('lab_error');
+        const data = await getJson<LabsRes>(res);
+        if (!ignore) {
+          setLabResults(data.labs);
+          setLabStatus(data.labs.length ? null : 'No labs found.');
+        }
+      } catch {
+        if (!ignore) {
+          setLabResults([]);
+          setLabStatus('No labs found.');
+        }
+      }
+    })();
+    return () => { ignore = true; };
+  }, [needLab, labTest, patient?.address]);
+
+  useEffect(() => {
+    if (!issueKey) {
+      setMedication('');
+      return;
+    }
+    const meds = ISSUE_MEDICATIONS[issueKey] || [];
+    setMedication((prev) => (prev && meds.includes(prev) ? prev : meds[0] ?? ''));
+  }, [issueKey]);
+
+  async function handleEditSubmit(e: FormEvent) {
+    e.preventDefault();
+    if (!patient) return;
+    setEditStatus(null);
+    try {
+      const res = await apiFetch(`/api/patients/${patient.id}`, { method: 'PUT', json: editForm });
+      const info = await res.json();
+      if (!res.ok) throw new Error(info?.error || 'Could not update patient');
+      setEditStatus('Changes saved.');
+      setEditing(false);
+      await fetchDetail();
+    } catch (err: any) {
+      setEditStatus(err?.message || 'Could not update patient');
+    }
+  }
+
+  async function handleAddNote(e: FormEvent) {
+    e.preventDefault();
+    if (!patient || !noteText.trim()) {
+      setNoteStatus('Write a note before saving.');
+      return;
+    }
+    setNoteStatus(null);
+    try {
+      const res = await apiFetch(`/api/patients/${patient.id}/notes`, { method: 'POST', json: { content: noteText.trim() } });
+      const info = await res.json();
+      if (!res.ok) throw new Error(info?.error || 'Could not add note');
+      setNoteText('');
+      setShowNoteForm(false);
+      await fetchDetail();
+      setNoteStatus('Note added.');
+    } catch (err: any) {
+      setNoteStatus(err?.message || 'Could not add note');
+    }
+  }
+
+  if (authLoading || detailLoading) {
     return (
-      <div className="min-h-screen bg-slate-50 text-slate-800 flex items-center justify-center">
-        <div className="bg-white border border-slate-200 rounded-lg p-8 text-center">
-          <div className="text-xl font-semibold mb-2">Patient not found</div>
-          <button onClick={()=>navigate('/dashboard')} className="text-[#1AA898] hover:underline text-sm">Back to Dashboard</button>
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center text-slate-500">
+        Fetching patient record…
+      </div>
+    );
+  }
+
+  if (detailError || !patient) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+        <div className="bg-white border border-slate-200 rounded-lg p-8 text-center space-y-3">
+          <p className="text-xl font-semibold">{detailError ?? 'Patient not found'}</p>
+          <button onClick={() => navigate('/dashboard')} className="text-[#1AA898] hover:underline text-sm">Back to dashboard</button>
         </div>
       </div>
     );
   }
 
+  const issueOptions = useMemo(() => Object.keys(ISSUE_MEDICATIONS), []);
+
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800">
-      {/* App bar (local to detail) */}
-      <div className="sticky top-0 z-30 bg-white/95 backdrop-blur border-b border-slate-200">
+      <header className="sticky top-0 z-30 bg-white/95 backdrop-blur border-b border-slate-200">
         <div className="max-w-5xl mx-auto px-4 md:px-6 h-14 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <button onClick={()=>navigate(-1)} className="text-slate-600 hover:text-slate-900">← Back</button>
-            <div className="font-semibold">Patient</div>
+            <button onClick={() => navigate(-1)} className="text-slate-600 hover:text-slate-900">← Back</button>
+            <div className="font-semibold">Patient chart</div>
           </div>
-          <div className="text-xs text-slate-500">Signed in as {email ?? '—'}</div>
+          <div className="text-xs text-slate-500">Signed in as {me}</div>
         </div>
-      </div>
+      </header>
 
-      <div className="max-w-5xl mx-auto px-4 md:px-6 py-6 space-y-6">
-        {/* Header card */}
-        <div className="bg-white rounded-lg border border-slate-200 p-5">
-          <div className="flex items-center justify-between">
+      <main className="max-w-5xl mx-auto px-4 md:px-6 py-6 space-y-6">
+        <section className="bg-white rounded-lg border border-slate-200 p-5">
+          <div className="flex flex-wrap items-center justify-between gap-4">
             <div>
               <h1 className="text-2xl font-bold">{patient.name}</h1>
-              <p className="text-slate-500 text-sm">DOB {patient.dob} • {patient.gender}</p>
+              <p className="text-sm text-slate-500">
+                DOB {patient.dob || '—'} · {patient.gender || '—'}
+              </p>
             </div>
             <div className="flex gap-2">
-              <button className="text-sm rounded-md border border-slate-300 px-3 py-2 hover:bg-slate-50">Edit</button>
-              <button className="text-sm rounded-md bg-[#1AA898] text-white px-3 py-2 hover:opacity-90">New Note</button>
+              <button className="text-sm rounded-md border border-slate-300 px-3 py-2 hover:bg-slate-50" onClick={() => setEditing((v) => !v)}>
+                {editing ? 'Cancel' : 'Edit'}
+              </button>
+              <button className="text-sm rounded-md bg-[#1AA898] text-white px-3 py-2 hover:opacity-90" onClick={() => setShowNoteForm((v) => !v)}>
+                {showNoteForm ? 'Close note' : 'New Note'}
+              </button>
             </div>
           </div>
-        </div>
 
-        {/* Info rows */}
-        <div className="grid md:grid-cols-3 gap-6">
-          <div className="bg-white rounded-lg border border-slate-200 p-5">
-            <h2 className="font-semibold mb-3">Contact</h2>
-            <div className="text-sm space-y-1">
-              <div><span className="text-slate-500">Phone:</span> {patient.phone}</div>
-              <div><span className="text-slate-500">Email:</span> {patient.email}</div>
-              <div><span className="text-slate-500">Address:</span> {patient.address}</div>
+          {editing ? (
+            <form className="grid md:grid-cols-2 gap-4 mt-4" onSubmit={handleEditSubmit}>
+              <label className="text-sm">
+                <span className="font-medium">Name</span>
+                <input className="mt-1 w-full" value={editForm.name} onChange={(e) => setEditForm((prev) => ({ ...prev, name: e.target.value }))} />
+              </label>
+              <label className="text-sm">
+                <span className="font-medium">DOB</span>
+                <input type="date" className="mt-1 w-full" value={editForm.dob} onChange={(e) => setEditForm((prev) => ({ ...prev, dob: e.target.value }))} />
+              </label>
+              <label className="text-sm">
+                <span className="font-medium">Gender</span>
+                <select className="mt-1 w-full" value={editForm.gender} onChange={(e) => setEditForm((prev) => ({ ...prev, gender: e.target.value }))}>
+                  <option value="Female">Female</option>
+                  <option value="Male">Male</option>
+                  <option value="Non-binary">Non-binary</option>
+                  <option value="Other">Other</option>
+                </select>
+              </label>
+              <label className="text-sm">
+                <span className="font-medium">Phone</span>
+                <input className="mt-1 w-full" value={editForm.phone} onChange={(e) => setEditForm((prev) => ({ ...prev, phone: e.target.value }))} />
+              </label>
+              <label className="text-sm">
+                <span className="font-medium">Email</span>
+                <input type="email" className="mt-1 w-full" value={editForm.email} onChange={(e) => setEditForm((prev) => ({ ...prev, email: e.target.value }))} />
+              </label>
+              <label className="text-sm md:col-span-2">
+                <span className="font-medium">Address</span>
+                <textarea className="mt-1 w-full" rows={2} value={editForm.address} onChange={(e) => setEditForm((prev) => ({ ...prev, address: e.target.value }))} />
+              </label>
+              {editStatus && <p className="text-xs text-slate-500">{editStatus}</p>}
+              <div className="md:col-span-2">
+                <button type="submit" className="btn btn-primary px-4 py-2">Save changes</button>
+              </div>
+            </form>
+          ) : (
+            <div className="grid md:grid-cols-3 gap-6 mt-4 text-sm text-slate-600">
+              <div>
+                <p className="text-xs text-slate-500">Phone</p>
+                <p>{patient.phone || '—'}</p>
+              </div>
+              <div>
+                <p className="text-xs text-slate-500">Email</p>
+                <p>{patient.email || '—'}</p>
+              </div>
+              <div>
+                <p className="text-xs text-slate-500">Address</p>
+                <p>{patient.address || '—'}</p>
+              </div>
             </div>
-          </div>
-          <div className="bg-white rounded-lg border border-slate-200 p-5">
-            <h2 className="font-semibold mb-3">Status</h2>
-            <div className="text-sm space-y-1">
-              <div><span className="text-slate-500">Last visit:</span> {patient.lastVisit}</div>
-              <div><span className="text-slate-500">Next:</span> Not scheduled</div>
-            </div>
-          </div>
-          <div className="bg-white rounded-lg border border-slate-200 p-5">
-            <h2 className="font-semibold mb-3">Referrals</h2>
-            <ul className="text-sm space-y-2">
-              {patient.referrals.length === 0 && <li className="text-slate-500">No referrals</li>}
-              {patient.referrals.map((r, i) => (
-                <li key={i} className="flex items-center justify-between">
-                  <span>{r.to}</span>
-                  <span className={`inline-flex items-center px-2.5 py-1 rounded-full border text-xs ${
-                    r.status === 'Accepted' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
-                    r.status === 'Sent' ? 'bg-blue-50 text-blue-700 border-blue-200' :
-                    'bg-slate-50 text-slate-700 border-slate-200'
-                  }`}>{r.status}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        </div>
+          )}
+        </section>
 
-        {/* Notes */}
-        <div className="bg-white rounded-lg border border-slate-200 p-5">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="font-semibold">Notes</h2>
-            <button className="text-sm text-[#1AA898] hover:underline">Add</button>
+        {showNoteForm && (
+          <section className="bg-white rounded-lg border border-slate-200 p-5">
+            <h2 className="font-semibold mb-3">Add clinical note</h2>
+            <form className="space-y-3" onSubmit={handleAddNote}>
+              <textarea className="w-full" rows={3} placeholder="Subjective, Objective, Assessment, Plan…" value={noteText} onChange={(e) => setNoteText(e.target.value)} />
+              {noteStatus && <p className="text-xs text-slate-500">{noteStatus}</p>}
+              <button type="submit" className="btn btn-primary px-4 py-2">Save note</button>
+            </form>
+          </section>
+        )}
+
+        <section className="grid md:grid-cols-2 gap-6">
+          <div className="bg-white rounded-lg border border-slate-200 p-5">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="font-semibold">Notes</h2>
+              <span className="text-xs text-slate-500">{notes.length} entries</span>
+            </div>
+            {notes.length === 0 ? (
+              <p className="text-sm text-slate-500">No notes yet.</p>
+            ) : (
+              <ul className="space-y-3 text-sm">
+                {notes.map((note) => (
+                  <li key={note.id} className="border border-slate-200 rounded-lg p-3">
+                    <p className="text-xs text-slate-500 mb-1">{new Date(note.createdAt * 1000).toLocaleString()}</p>
+                    <p>{note.content}</p>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
-          <ul className="text-sm list-disc pl-5 space-y-1">
-            {patient.notes.map((n, i) => (
-              <li key={i}>{n}</li>
-            ))}
-          </ul>
-        </div>
-      </div>
+          <div className="bg-white rounded-lg border border-slate-200 p-5">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="font-semibold">Recent appointments</h2>
+              <span className="text-xs text-slate-500">{appointments.length}</span>
+            </div>
+            {appointments.length === 0 ? (
+              <p className="text-sm text-slate-500">No visits recorded.</p>
+            ) : (
+              <ul className="space-y-2 text-sm">
+                {appointments.map((appt) => (
+                  <li key={appt.id} className="border border-slate-200 rounded-lg p-3">
+                    <p className="font-medium text-[#122E3A]">{formatDate(appt.startTs)} · {formatTime(appt.startTs)}</p>
+                    <p className="text-slate-500">{appt.reason || 'General consult'}</p>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </section>
+
+        <section className="grid md:grid-cols-2 gap-6">
+          <div className="bg-white rounded-lg border border-slate-200 p-5 space-y-3">
+            <div className="flex items-center justify-between">
+              <h2 className="font-semibold">Lab planning</h2>
+              <label className="flex items-center gap-2 text-sm">
+                <input type="checkbox" checked={needLab} onChange={(e) => setNeedLab(e.target.checked)} /> Need lab?
+              </label>
+            </div>
+            {needLab && (
+              <>
+                <label className="text-sm">
+                  <span className="font-medium">Test</span>
+                  <select className="mt-1 w-full" value={labTest} onChange={(e) => setLabTest(e.target.value)}>
+                    {LAB_TESTS.map((test) => (
+                      <option key={test} value={test}>{test}</option>
+                    ))}
+                  </select>
+                </label>
+                {labStatus && <p className="text-xs text-slate-500">{labStatus}</p>}
+                {!labStatus && labResults.length > 0 && (
+                  <ul className="space-y-2 text-sm">
+                    {labResults.map((lab) => (
+                      <li key={lab.name} className="border border-slate-200 rounded-lg p-3">
+                        <p className="font-medium text-[#122E3A]">{lab.name}</p>
+                        <p className="text-xs text-slate-500">{lab.city}</p>
+                        <p className="text-xs">Tests: {lab.tests.join(', ')}</p>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </>
+            )}
+            {!needLab && <p className="text-sm text-slate-500">Toggle on when a lab requisition is needed.</p>}
+          </div>
+
+          <div className="bg-white rounded-lg border border-slate-200 p-5 space-y-3">
+            <h2 className="font-semibold">Prescription ideas</h2>
+            <label className="text-sm">
+              <span className="font-medium">Condition</span>
+              <select className="mt-1 w-full" value={issueKey} onChange={(e) => setIssueKey(e.target.value)}>
+                <option value="">Select</option>
+                {issueOptions.map((issue) => (
+                  <option key={issue} value={issue}>{issue}</option>
+                ))}
+              </select>
+            </label>
+            {issueKey && (
+              <label className="text-sm">
+                <span className="font-medium">Medication</span>
+                <select className="mt-1 w-full" value={medication} onChange={(e) => setMedication(e.target.value)}>
+                  {(ISSUE_MEDICATIONS[issueKey] || []).map((med) => (
+                    <option key={med} value={med}>{med}</option>
+                  ))}
+                </select>
+              </label>
+            )}
+            {issueKey && (
+              <div className="text-xs text-slate-500">
+                Document this plan via “New Note” to capture into the chart.
+              </div>
+            )}
+          </div>
+        </section>
+      </main>
     </div>
   );
 }
 
+function formatTime(ts: number) {
+  return new Date(ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+function formatDate(ts: number) {
+  return new Date(ts * 1000).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}

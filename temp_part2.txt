@@ -1,0 +1,51 @@
+                  inputMode="numeric"
+                  className="mt-1 w-full"
+                  placeholder="123456"
+                  value={code}
+                  onChange={(e) => setCode(e.target.value)}
+                />
+              </label>
+              <button onClick={handleVerify} className="w-full btn btn-primary py-2">
+                Verify &amp; Continue
+              </button>
+              <button
+                onClick={handleRegenerateQrClick}
+                type="button"
+                className="w-full btn btn-secondary py-2"
+              >
+                Regenerate QR
+              </button>
+            </div>
+          )}
+
+          {step === 'code' && (
+            <div className="space-y-4">
+              <label className="block">
+                <span className="text-sm font-medium">6-digit code</span>
+                <input
+                  inputMode="numeric"
+                  className="mt-1 w-full"
+                  placeholder="123456"
+                  value={code}
+                  onChange={(e) => setCode(e.target.value)}
+                />
+              </label>
+              <button onClick={handleCodeLogin} className="w-full btn btn-primary py-2">
+                Log In
+              </button>
+            </div>
+          )}
+
+          {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
+
+          <p className="text-sm text-center text-slate-500 mt-6">
+            Don’t have an account?{' '}
+            <a href="/request-access" className="text-[#1AA898] underline">
+              Request Access
+            </a>
+          </p>
+        </div>
+      </main>
+    </div>
+  );
+}

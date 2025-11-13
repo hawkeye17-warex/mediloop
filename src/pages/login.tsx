@@ -50,6 +50,12 @@ export default function LoginPage() {
       const res = await api('/auth/verify-enroll', { email, code });
       if (!res.ok) {
         const info = await safeJson(res);
+        if (info?.error === 'enroll_required') {
+          setError('Your authenticator setup needs to be refreshed. Scan a new QR.');
+          await start(true);
+          setStep('enroll');
+          return;
+        }
         setError(info?.error || 'Invalid code.');
         return;
       }
@@ -65,6 +71,12 @@ export default function LoginPage() {
       const res = await api('/auth/login', { email, code });
       if (!res.ok) {
         const info = await safeJson(res);
+        if (info?.error === 'enroll_required') {
+          setError('Your authenticator setup needs to be refreshed. Scan a new QR.');
+          await start(true);
+          setStep('enroll');
+          return;
+        }
         setError(info?.error || 'Invalid code.');
         return;
       }
@@ -90,79 +102,34 @@ export default function LoginPage() {
   }
 
   async function safeJson(res: Response) {
-    try {
-      return await res.json();
-    } catch {
-      return null;
-    }
+    try { return await res.json(); } catch { return null; }
   }
 
-  // ---- Button handlers (each is a proper MouseEventHandler) ----
-  const handlePasswordLogin: MouseEventHandler<HTMLButtonElement> = (e) => {
-    e.preventDefault();
-    void loginWithPassword();
-  };
-
-  const handleStartClick: MouseEventHandler<HTMLButtonElement> = (e) => {
-    e.preventDefault();
-    void start(false);
-  };
-
-  const handleRegenerateQrClick: MouseEventHandler<HTMLButtonElement> = (e) => {
-    e.preventDefault();
-    void start(true);
-  };
-
-  const handleVerify: MouseEventHandler<HTMLButtonElement> = (e) => {
-    e.preventDefault();
-    void verifyEnroll();
-  };
-
-  const handleCodeLogin: MouseEventHandler<HTMLButtonElement> = (e) => {
-    e.preventDefault();
-    void login();
-  };
-  // --------------------------------------------------------------
+  // ---- Button handlers (typed for TS on Vercel) ----
+  const handlePasswordLogin: MouseEventHandler<HTMLButtonElement> = (e) => { e.preventDefault(); void loginWithPassword(); };
+  const handleStartClick: MouseEventHandler<HTMLButtonElement> = (e) => { e.preventDefault(); void start(false); };
+  const handleRegenerateQrClick: MouseEventHandler<HTMLButtonElement> = (e) => { e.preventDefault(); void start(true); };
+  const handleVerify: MouseEventHandler<HTMLButtonElement> = (e) => { e.preventDefault(); void verifyEnroll(); };
+  const handleCodeLogin: MouseEventHandler<HTMLButtonElement> = (e) => { e.preventDefault(); void login(); };
 
   return (
     <div className="min-h-[calc(100vh-200px)] text-slate-800">
       <main className="pt-28 px-6 max-w-7xl mx-auto flex items-center justify-center">
         <div className="glass-card w-full max-w-md p-8 rounded-2xl">
-          <h1 className="text-3xl font-bold text-center mb-6 bg-gradient-to-r from-[#122E3A] to-[#1AA898] bg-clip-text text-transparent">
-            Login
-          </h1>
+          <h1 className="text-3xl font-bold text-center mb-6 bg-gradient-to-r from-[#122E3A] to-[#1AA898] bg-clip-text text-transparent">Login</h1>
 
           {step === 'password' && (
             <div className="space-y-4">
               <label className="block">
                 <span className="text-sm font-medium">Email</span>
-                <input
-                  type="email"
-                  className="mt-1 w-full"
-                  placeholder="you@clinic.com"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                />
+                <input type="email" className="mt-1 w-full" placeholder="you@clinic.com" value={email} onChange={(e)=>setEmail(e.target.value)} />
               </label>
               <label className="block">
                 <span className="text-sm font-medium">Password</span>
-                <input
-                  type="password"
-                  className="mt-1 w-full"
-                  placeholder="••••••••"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                />
+                <input type="password" className="mt-1 w-full" placeholder="••••••••" value={password} onChange={(e)=>setPassword(e.target.value)} />
               </label>
-              <button onClick={handlePasswordLogin} className="w-full btn btn-primary py-2">
-                Log In
-              </button>
-              <div className="text-xs text-slate-500 text-center">
-                Prefer Authenticator?{' '}
-                <button className="underline" onClick={() => setStep('email')}>
-                  Use TOTP
-                </button>
-              </div>
+              <button onClick={handlePasswordLogin} className="w-full btn btn-primary py-2">Log In</button>
+              <div className="text-xs text-slate-500 text-center">Prefer Authenticator? <button className="underline" onClick={()=>setStep('email')}>Use TOTP</button></div>
             </div>
           )}
 
@@ -170,88 +137,44 @@ export default function LoginPage() {
             <div className="space-y-4">
               <label className="block">
                 <span className="text-sm font-medium">Email</span>
-                <input
-                  type="email"
-                  className="mt-1 w-full"
-                  placeholder="you@clinic.com"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                />
+                <input type="email" className="mt-1 w-full" placeholder="you@clinic.com" value={email} onChange={(e)=>setEmail(e.target.value)} />
               </label>
-              <button onClick={handleStartClick} className="w-full btn btn-primary py-2">
-                Continue
-              </button>
+              <button onClick={handleStartClick} className="w-full btn btn-primary py-2">Continue</button>
             </div>
           )}
 
           {step === 'enroll' && (
             <div className="space-y-4">
-              <p className="text-sm text-slate-600">
-                Scan this QR with Google or Microsoft Authenticator, then enter the 6-digit code.
-              </p>
-              {qr && (
-                <img
-                  alt="Authenticator QR"
-                  src={qr}
-                  className="mx-auto rounded-lg border border-slate-200"
-                />
-              )}
+              <p className="text-sm text-slate-600">Scan this QR with Google or Microsoft Authenticator, then enter the 6‑digit code.</p>
+              {qr && <img alt="Authenticator QR" src={qr} className="mx-auto rounded-lg border border-slate-200" />}
               {devSecret && (
-                <p className="text-xs text-slate-500 text-center">
-                  Dev secret: <code>{devSecret}</code>
-                </p>
+                <p className="text-xs text-slate-500 text-center">Dev secret: <code>{devSecret}</code></p>
               )}
               <label className="block">
-                <span className="text-sm font-medium">6-digit code</span>
-                <input
-                  inputMode="numeric"
-                  className="mt-1 w-full"
-                  placeholder="123456"
-                  value={code}
-                  onChange={(e) => setCode(e.target.value)}
-                />
+                <span className="text-sm font-medium">6‑digit code</span>
+                <input inputMode="numeric" className="mt-1 w-full" placeholder="123456" value={code} onChange={(e)=>setCode(e.target.value)} />
               </label>
-              <button onClick={handleVerify} className="w-full btn btn-primary py-2">
-                Verify &amp; Continue
-              </button>
-              <button
-                onClick={handleRegenerateQrClick}
-                type="button"
-                className="w-full btn btn-secondary py-2"
-              >
-                Regenerate QR
-              </button>
-            </div>
+              <button onClick={handleVerify} className="w-full btn btn-primary py-2">Verify &amp; Continue</button>
+              <button onClick={handleRegenerateQrClick} type="button" className="w-full btn btn-secondary py-2">Regenerate QR</button>
+              </div>
           )}
 
           {step === 'code' && (
             <div className="space-y-4">
               <label className="block">
-                <span className="text-sm font-medium">6-digit code</span>
-                <input
-                  inputMode="numeric"
-                  className="mt-1 w-full"
-                  placeholder="123456"
-                  value={code}
-                  onChange={(e) => setCode(e.target.value)}
-                />
+                <span className="text-sm font-medium">6‑digit code</span>
+                <input inputMode="numeric" className="mt-1 w-full" placeholder="123456" value={code} onChange={(e)=>setCode(e.target.value)} />
               </label>
-              <button onClick={handleCodeLogin} className="w-full btn btn-primary py-2">
-                Log In
-              </button>
+              <button onClick={handleCodeLogin} className="w-full btn btn-primary py-2">Log In</button>
             </div>
           )}
 
           {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
 
-          <p className="text-sm text-center text-slate-500 mt-6">
-            Don’t have an account?{' '}
-            <a href="/request-access" className="text-[#1AA898] underline">
-              Request Access
-            </a>
-          </p>
+          <p className="text-sm text-center text-slate-500 mt-6">Don’t have an account? <a href="/request-access" className="text-[#1AA898] underline">Request Access</a></p>
         </div>
       </main>
     </div>
   );
 }
+

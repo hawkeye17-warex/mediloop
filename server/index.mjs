@@ -313,6 +313,92 @@ app.post('/api/auth/admin/reset-user', (req, res) => {
   return res.json({ ok: true });
 });
 
+// ---------------------- App data API (minimal store) ----------------------
+function requireAuthApi(req, res, next) {
+  const token = req.cookies[SESSION_COOKIE];
+  if (!token) return res.status(401).json({ error: 'unauthorized' });
+  const s = SQL.getSessionByHash.get(hash(token));
+  if (!s || s.expires_at < nowS()) return res.status(401).json({ error: 'unauthorized' });
+  req.userId = s.user_id;
+  next();
+}
+
+// In-memory store (kept simple for demo; replace with DB later)
+const STORE = { patients: [], notes: [], appts: [] };
+
+// Patients
+app.get('/api/patients', requireAuthApi, (req, res) => {
+  const patients = STORE.patients.filter(p => p.userId === req.userId).slice(-200).reverse();
+  res.json({ patients });
+});
+
+app.post('/api/patients', requireAuthApi, (req, res) => {
+  const { name, dob, gender, phone, email, address } = req.body || {};
+  if (!name) return res.status(400).json({ error: 'name_required' });
+  const id = crypto.randomBytes(6).toString('hex');
+  STORE.patients.push({ id, userId: req.userId, name, dob, gender, phone, email, address, createdAt: nowS() });
+  res.json({ id });
+});
+
+app.get('/api/patients/:id', requireAuthApi, (req, res) => {
+  const p = STORE.patients.find(x => x.id === req.params.id && x.userId === req.userId);
+  if (!p) return res.status(404).json({ error: 'not_found' });
+  const notes = STORE.notes.filter(n => n.patientId === p.id).sort((a,b)=>b.createdAt-a.createdAt);
+  const appointments = STORE.appts.filter(a => a.patientId === p.id).sort((a,b)=>b.startTs-a.startTs);
+  res.json({ patient: p, notes, appointments });
+});
+
+app.put('/api/patients/:id', requireAuthApi, (req, res) => {
+  const p = STORE.patients.find(x => x.id === req.params.id && x.userId === req.userId);
+  if (!p) return res.status(404).json({ error: 'not_found' });
+  const { name, dob, gender, phone, email, address } = req.body || {};
+  Object.assign(p, { name: name ?? p.name, dob: dob ?? p.dob, gender: gender ?? p.gender, phone: phone ?? p.phone, email: email ?? p.email, address: address ?? p.address });
+  res.json({ ok: true });
+});
+
+app.post('/api/patients/:id/notes', requireAuthApi, (req, res) => {
+  const p = STORE.patients.find(x => x.id === req.params.id && x.userId === req.userId);
+  if (!p) return res.status(404).json({ error: 'not_found' });
+  const { content } = req.body || {};
+  if (!content) return res.status(400).json({ error: 'content_required' });
+  STORE.notes.push({ id: STORE.notes.length + 1, patientId: p.id, content, createdAt: nowS() });
+  res.json({ ok: true });
+});
+
+// Appointments
+app.get('/api/appointments/upcoming', requireAuthApi, (req, res) => {
+  const now = nowS();
+  const appts = STORE.appts.filter(a => a.startTs >= now && STORE.patients.some(p => p.id === a.patientId && p.userId === req.userId))
+    .map(a => ({ ...a, patient: STORE.patients.find(p => p.id === a.patientId) }))
+    .sort((a,b)=>a.startTs-b.startTs)
+    .slice(0, 200);
+  res.json({ appointments: appts });
+});
+
+app.post('/api/appointments', requireAuthApi, (req, res) => {
+  const { patientId, startTs, reason } = req.body || {};
+  const p = STORE.patients.find(x => x.id === patientId && x.userId === req.userId);
+  if (!p) return res.status(400).json({ error: 'invalid_patient' });
+  if (!startTs) return res.status(400).json({ error: 'start_ts_required' });
+  STORE.appts.push({ id: STORE.appts.length + 1, patientId, startTs: Number(startTs), reason: reason || '', createdAt: nowS() });
+  res.json({ ok: true });
+});
+
+// Labs (city match)
+const LABS = [
+  { name: 'Prairie Labs - Downtown', city: 'Winnipeg', tests: ['Bloodwork', 'MRI', 'X-Ray'] },
+  { name: 'HealthPlus Labs', city: 'Winnipeg', tests: ['Bloodwork'] },
+  { name: 'Lakeview Diagnostics', city: 'Brandon', tests: ['Bloodwork', 'Ultrasound'] },
+];
+app.get('/api/labs/nearby', requireAuthApi, (req, res) => {
+  const address = String(req.query.address || '');
+  const test = String(req.query.test || '');
+  const city = address.split(',').map(s=>s.trim()).slice(-1)[0] || '';
+  let results = LABS.filter(l => (!test || l.tests.includes(test)) && (!city || l.city.toLowerCase() === city.toLowerCase()));
+  if (results.length === 0) results = LABS.filter(l => !test || l.tests.includes(test));
+  res.json({ labs: results.slice(0,5) });
+});
+
 app.listen(PORT, () => {
   console.log(`[server] listening on http://localhost:${PORT}`);
 });
