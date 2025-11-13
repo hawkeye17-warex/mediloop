@@ -191,7 +191,7 @@ app.post('/api/auth/verify-enroll', (req, res) => {
     const code = String(req.body?.code || '').replace(/\D/g, '').trim();
     const user = SQL.getUserByEmail.get(email);
     if (!user || !user.totp_temp_secret_encrypted) return res.status(400).json({ error: 'enroll_required' });
-    const secret = decrypt(user.totp_temp_secret_encrypted);
+    let secret; try { secret = decrypt(user.totp_temp_secret_encrypted); } catch (e) { try { SQL.updateTempSecret.run(null, user.id); } catch {} return res.status(400).json({ error: 'enroll_required' }); }
     const ok = authenticator.verify({ token: code, secret, window: 2 });
     if (!ok) return res.status(400).json({ error: 'invalid_code' });
     SQL.promoteSecret.run(encrypt(secret), user.id);
@@ -211,7 +211,7 @@ app.post('/api/auth/login', (req, res) => {
     const user = SQL.getUserByEmail.get(email);
     if (!user) return res.status(400).json({ error: 'not_found' });
     if (!user.totp_enabled || !user.totp_secret_encrypted) return res.status(400).json({ error: 'enroll_required' });
-    const secret = decrypt(user.totp_secret_encrypted);
+    let secret; try { secret = decrypt(user.totp_secret_encrypted); } catch (e) { return res.status(400).json({ error: 'enroll_required' }); }
     const ok = authenticator.verify({ token: code, secret, window: 2 });
     if (!ok) return res.status(400).json({ error: 'invalid_code' });
     issueSession(res, user.id);
