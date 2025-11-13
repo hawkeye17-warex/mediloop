@@ -88,7 +88,7 @@ export default function LoginPage() {
                 <span className="text-sm font-medium">Password</span>
                 <input type="password" className="mt-1 w-full" placeholder="••••••••" value={password} onChange={(e)=>setPassword(e.target.value)} />
               </label>
-              <button onClick={loginWithPassword} className="w-full btn btn-primary py-2">Log In</button>
+              <button onClick={() => { void loginWithPassword(); }} className="w-full btn btn-primary py-2">Log In</button>
               <div className="text-xs text-slate-500 text-center">Prefer Authenticator? <button className="underline" onClick={()=>setStep('email')}>Use TOTP</button></div>
             </div>
           )}
@@ -99,7 +99,7 @@ export default function LoginPage() {
                 <span className="text-sm font-medium">Email</span>
                 <input type="email" className="mt-1 w-full" placeholder="you@clinic.com" value={email} onChange={(e)=>setEmail(e.target.value)} />
               </label>
-              <button onClick={start} className="w-full btn btn-primary py-2">Continue</button>
+              <button onClick={() => { void start(); }} className="w-full btn btn-primary py-2">Continue</button>
             </div>
           )}
 
@@ -114,8 +114,8 @@ export default function LoginPage() {
                 <span className="text-sm font-medium">6‑digit code</span>
                 <input inputMode="numeric" className="mt-1 w-full" placeholder="123456" value={code} onChange={(e)=>setCode(e.target.value)} />
               </label>
-              <button onClick={verifyEnroll} className="w-full btn btn-primary py-2">Verify & Continue</button>
-              <button onClick={()=>start(true)} type="button" className="w-full btn btn-secondary py-2">Regenerate QR</button>
+              <button onClick={() => { void verifyEnroll(); }} className="w-full btn btn-primary py-2">Verify & Continue</button>
+              <button onClick={() => { void start(true); }} type="button" className="w-full btn btn-secondary py-2">Regenerate QR</button>
               </div>
           )}
 
@@ -125,7 +125,7 @@ export default function LoginPage() {
                 <span className="text-sm font-medium">6‑digit code</span>
                 <input inputMode="numeric" className="mt-1 w-full" placeholder="123456" value={code} onChange={(e)=>setCode(e.target.value)} />
               </label>
-              <button onClick={login} className="w-full btn btn-primary py-2">Log In</button>
+              <button onClick={() => { void login(); }} className="w-full btn btn-primary py-2">Log In</button>
             </div>
           )}
 
