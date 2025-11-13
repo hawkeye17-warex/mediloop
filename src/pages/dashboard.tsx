@@ -12,7 +12,7 @@ export default function DashboardPage() {
   useEffect(() => {
     (async () => {
       try {
-        const res = await fetch('/api/auth/me', { credentials: 'include' });
+        const res = await (await import('../lib/api')).apiFetch('/api/auth/me', { credentials: 'include' });
         const data: Me = await res.json();
         setEmail(data.user?.email ?? null);
       } finally { setLoading(false); }

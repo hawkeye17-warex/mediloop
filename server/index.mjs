@@ -122,7 +122,7 @@ const issueSession = (res, userId) => {
   SQL.createSession.run(userId, hash(token), nowS() + SESSION_TTL_S, nowS());
   res.cookie(SESSION_COOKIE, token, {
     httpOnly: true,
-    sameSite: 'lax',
+    sameSite: 'none',
     secure: COOKIE_SECURE,
     maxAge: SESSION_TTL_S * 1000,
     path: '/',
