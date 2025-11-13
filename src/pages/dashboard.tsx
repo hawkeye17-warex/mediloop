@@ -374,7 +374,9 @@ export default function DashboardPage() {
             <div className="font-semibold">MediLoop</div>
             <div className="flex items-center gap-3">
               <input className="hidden md:block w-64 text-sm rounded-md border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#1AA898]" placeholder="Search patients or notes" />
-              <button className="w-9 h-9 rounded-full border border-slate-200 bg-white hover:bg-slate-50" title="Notifications">??</button>
+              <button className="w-9 h-9 rounded-full border border-slate-200 bg-white hover:bg-slate-50" title="Notifications" aria-label="Notifications">
+                🔔
+              </button>
               <div className="w-9 h-9 rounded-full bg-gradient-to-br from-[#122E3A] to-[#1AA898] text-white flex items-center justify-center text-sm font-semibold">{(me || 'M')[0].toUpperCase()}</div>
             </div>
           </div>
@@ -420,7 +422,6 @@ export default function DashboardPage() {
                 <LabOrdersSnapshot labOrders={labOrders} loading={labOrdersLoading} patientMap={patientMap} onUpdateStatus={handleLabStatusChange} />
               </section>
             </div>
-...
 
             <section className="grid lg:grid-cols-3 gap-6">
               <div className="lg:col-span-2 bg-white rounded-xl border border-slate-200 p-4">
