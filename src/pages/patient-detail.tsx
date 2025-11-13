@@ -1,7 +1,7 @@
 ﻿import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { FormEvent } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { apiFetch, getJson } from '../lib/api';
+import { apiFetch, getJson, API_BASE } from '../lib/api';
 
 type Me = { user: { email: string } | null };
 
@@ -20,6 +20,8 @@ type Note = { id: number; patientId: string; content: string; createdAt: number 
 
 type Appointment = { id: number; patientId: string; startTs: number; reason?: string | null };
 
+type FileItem = { id: string; filename: string; mime?: string | null; size?: number | null; createdAt: number };
+
 type LabOrder = {
   id: number;
   patientId: string;
@@ -31,7 +33,7 @@ type LabOrder = {
   createdAt: number;
 };
 
-type PatientDetailRes = { patient: Patient; notes: Note[]; appointments: Appointment[]; labs?: LabOrder[] };
+type PatientDetailRes = { patient: Patient; notes: Note[]; appointments: Appointment[]; labs?: LabOrder[]; files?: FileItem[] };
 
 type Lab = { name: string; city: string; tests: string[] };
 type LabsRes = { labs: Lab[] };
@@ -56,6 +58,7 @@ export default function PatientDetail() {
   const [patient, setPatient] = useState<Patient | null>(null);
   const [notes, setNotes] = useState<Note[]>([]);
   const [appointments, setAppointments] = useState<Appointment[]>([]);
+  const [files, setFiles] = useState<FileItem[]>([]);
   const [labs, setLabs] = useState<LabOrder[]>([]);
   const [detailLoading, setDetailLoading] = useState(true);
   const [detailError, setDetailError] = useState<string | null>(null);
@@ -66,6 +69,8 @@ export default function PatientDetail() {
 
   const [showNoteForm, setShowNoteForm] = useState(false);
   const [noteText, setNoteText] = useState('');
+  const [noteSoap, setNoteSoap] = useState({ subjective: '', objective: '', assessment: '', plan: '' });
+  const [noteAttachments, setNoteAttachments] = useState<string[]>([]);
   const [noteStatus, setNoteStatus] = useState<string | null>(null);
 
   const [needLab, setNeedLab] = useState(false);
@@ -79,6 +84,12 @@ export default function PatientDetail() {
 
   const [issueKey, setIssueKey] = useState('');
   const [medication, setMedication] = useState('');
+  const [fileUploadStatus, setFileUploadStatus] = useState<string | null>(null);
+  const [fileUploading, setFileUploading] = useState(false);
+
+  const issueOptions = useMemo(() => Object.keys(ISSUE_MEDICATIONS), []);
+  const fileMap = useMemo(() => new Map(files.map((f) => [f.id, f])), [files]);
+  const fileMap = useMemo(() => new Map(files.map((f) => [f.id, f])), [files]);
 
   useEffect(() => {
     let ignore = false;
@@ -123,6 +134,7 @@ export default function PatientDetail() {
       setNotes(data.notes);
       setAppointments(data.appointments);
       setLabs(data.labs ?? []);
+      setFiles(data.files ?? []);
       setEditForm({
         name: data.patient.name,
         dob: data.patient.dob ?? '',
@@ -201,25 +213,68 @@ export default function PatientDetail() {
     }
   }
 
-  async function handleAddNote(e: FormEvent) {
-    e.preventDefault();
-    if (!patient || !noteText.trim()) {
-      setNoteStatus('Write a note before saving.');
-      return;
-    }
-    setNoteStatus(null);
-    try {
-      const res = await apiFetch(`/api/patients/${patient.id}/notes`, { method: 'POST', json: { content: noteText.trim() } });
-      const info = await res.json();
-      if (!res.ok) throw new Error(info?.error || 'Could not add note');
-      setNoteText('');
-      setShowNoteForm(false);
-      await fetchDetail();
-      setNoteStatus('Note added.');
-    } catch (err: any) {
-      setNoteStatus(err?.message || 'Could not add note');
-    }
+async function handleAddNote(e: FormEvent) {
+  e.preventDefault();
+  if (!patient) return;
+  if (!noteText.trim() && !noteSoap.subjective && !noteSoap.objective && !noteSoap.assessment && !noteSoap.plan) {
+    setNoteStatus('Add text in at least one SOAP field.');
+    return;
   }
+  setNoteStatus(null);
+  try {
+    const res = await apiFetch(`/api/patients/${patient.id}/notes`, {
+      method: 'POST',
+      json: {
+        content: noteText.trim() || undefined,
+        soapSubjective: noteSoap.subjective || undefined,
+        soapObjective: noteSoap.objective || undefined,
+        soapAssessment: noteSoap.assessment || undefined,
+        soapPlan: noteSoap.plan || undefined,
+        attachments: noteAttachments,
+      },
+    });
+    const info = await res.json();
+    if (!res.ok) throw new Error(info?.error || 'Could not add note');
+    setNoteText('');
+    setNoteSoap({ subjective: '', objective: '', assessment: '', plan: '' });
+    setNoteAttachments([]);
+    setShowNoteForm(false);
+    await fetchDetail();
+    setNoteStatus('Note added.');
+  } catch (err: any) {
+    setNoteStatus(err?.message || 'Could not add note');
+  }
+}
+
+async function handleUploadFiles(fileList: FileList | null) {
+  if (!patient || !fileList || fileList.length === 0) return;
+  setFileUploading(true);
+  setFileUploadStatus('Uploading files...');
+  try {
+    for (const file of Array.from(fileList)) {
+      const dataUrl = await fileToDataUrl(file);
+      const res = await apiFetch(`/api/patients/${patient.id}/files`, { method: 'POST', json: { filename: file.name, dataUrl } });
+      const info = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(info?.error || 'Upload failed');
+    }
+    setFileUploadStatus('Uploaded successfully.');
+    await fetchDetail();
+  } catch (err: any) {
+    setFileUploadStatus(err?.message || 'Upload failed');
+  } finally {
+    setFileUploading(false);
+    setTimeout(() => setFileUploadStatus(null), 3000);
+  }
+}
+
+function fileToDataUrl(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+}
 
   async function handleCreateLabOrder() {
     if (!patient || !selectedLab) {
@@ -274,6 +329,7 @@ export default function PatientDetail() {
   }
 
   const issueOptions = useMemo(() => Object.keys(ISSUE_MEDICATIONS), []);
+  const fileMap = useMemo(() => new Map(files.map((f) => [f.id, f])), [files]);
 
   if (authLoading || detailLoading) {
     return (
@@ -299,7 +355,7 @@ export default function PatientDetail() {
       <header className="sticky top-0 z-30 bg-white/95 backdrop-blur border-b border-slate-200">
         <div className="max-w-5xl mx-auto px-4 md:px-6 h-14 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <button onClick={() => navigate(-1)} className="text-slate-600 hover:text-slate-900">← Back</button>
+            <button onClick={() => navigate(-1)} className="text-slate-600 hover:text-slate-900">&larr; Back</button>
             <div className="font-semibold">Patient chart</div>
           </div>
           <div className="text-xs text-slate-500">Signed in as {me}</div>
@@ -381,34 +437,107 @@ export default function PatientDetail() {
 
         {showNoteForm && (
           <section className="bg-white rounded-lg border border-slate-200 p-5">
-            <h2 className="font-semibold mb-3">Add clinical note</h2>
+            <h2 className="font-semibold mb-3">Add SOAP note</h2>
             <form className="space-y-3" onSubmit={handleAddNote}>
-              <textarea className="w-full" rows={3} placeholder="Subjective, Objective, Assessment, Plan…" value={noteText} onChange={(e) => setNoteText(e.target.value)} />
+              <div className="grid md:grid-cols-2 gap-3">
+                <label className="text-sm">
+                  <span className="font-medium">Subjective</span>
+                  <textarea className="w-full mt-1" rows={3} value={noteSoap.subjective} onChange={(e) => setNoteSoap((prev) => ({ ...prev, subjective: e.target.value }))} />
+                </label>
+                <label className="text-sm">
+                  <span className="font-medium">Objective</span>
+                  <textarea className="w-full mt-1" rows={3} value={noteSoap.objective} onChange={(e) => setNoteSoap((prev) => ({ ...prev, objective: e.target.value }))} />
+                </label>
+                <label className="text-sm">
+                  <span className="font-medium">Assessment</span>
+                  <textarea className="w-full mt-1" rows={3} value={noteSoap.assessment} onChange={(e) => setNoteSoap((prev) => ({ ...prev, assessment: e.target.value }))} />
+                </label>
+                <label className="text-sm">
+                  <span className="font-medium">Plan</span>
+                  <textarea className="w-full mt-1" rows={3} value={noteSoap.plan} onChange={(e) => setNoteSoap((prev) => ({ ...prev, plan: e.target.value }))} />
+                </label>
+              </div>
+              <label className="text-sm block">
+                <span className="font-medium">General notes</span>
+                <textarea className="w-full mt-1" rows={3} placeholder="Additional context" value={noteText} onChange={(e) => setNoteText(e.target.value)} />
+              </label>
+              <div className="text-sm">
+                <span className="font-medium">Attach files</span>
+                {files.length === 0 ? (
+                  <p className="text-xs text-slate-500 mt-1">Upload files below to attach them to this note.</p>
+                ) : (
+                  <div className="mt-2 space-y-1">
+                    {files.map((file) => (
+                      <label key={file.id} className="flex items-center gap-2 text-xs">
+                        <input type="checkbox" checked={noteAttachments.includes(file.id)} onChange={(e) => {
+                          setNoteAttachments((prev) => e.target.checked ? [...prev, file.id] : prev.filter((id) => id !== file.id));
+                        }} />
+                        <span>{file.filename}</span>
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </div>
               {noteStatus && <p className="text-xs text-slate-500">{noteStatus}</p>}
-              <button type="submit" className="btn btn-primary px-4 py-2">Save note</button>
+              <div className="flex gap-2">
+                <button type="submit" className="btn btn-primary px-4 py-2">Save note</button>
+                <button type="button" className="btn btn-secondary px-4 py-2" onClick={() => setShowNoteForm(false)}>Cancel</button>
+              </div>
             </form>
           </section>
         )}
 
         <section className="grid md:grid-cols-2 gap-6">
           <div className="bg-white rounded-lg border border-slate-200 p-5">
-            <div className="flex items-center justify-between mb-3">
-              <h2 className="font-semibold">Notes</h2>
-              <span className="text-xs text-slate-500">{notes.length} entries</span>
-            </div>
-            {notes.length === 0 ? (
-              <p className="text-sm text-slate-500">No notes yet.</p>
-            ) : (
-              <ul className="space-y-3 text-sm">
-                {notes.map((note) => (
-                  <li key={note.id} className="border border-slate-200 rounded-lg p-3">
-                    <p className="text-xs text-slate-500 mb-1">{new Date(note.createdAt * 1000).toLocaleString()}</p>
-                    <p>{note.content}</p>
-                  </li>
-                ))}
-              </ul>
-            )}
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="font-semibold">Notes</h2>
+            <span className="text-xs text-slate-500">{notes.length} entries</span>
           </div>
+          {notes.length === 0 ? (
+            <p className="text-sm text-slate-500">No notes yet.</p>
+          ) : (
+            <ul className="space-y-3 text-sm">
+              {notes.map((note) => (
+                <li key={note.id} className="border border-slate-200 rounded-lg p-3 space-y-2">
+                  <p className="text-xs text-slate-500">{new Date(note.createdAt * 1000).toLocaleString()}</p>
+                  {note.soap?.subjective && (
+                    <NoteBlock title="Subjective" text={note.soap.subjective} />
+                  )}
+                  {note.soap?.objective && (
+                    <NoteBlock title="Objective" text={note.soap.objective} />
+                  )}
+                  {note.soap?.assessment && (
+                    <NoteBlock title="Assessment" text={note.soap.assessment} />
+                  )}
+                  {note.soap?.plan && (
+                    <NoteBlock title="Plan" text={note.soap.plan} />
+                  )}
+                  {note.content && (
+                    <NoteBlock title="Additional" text={note.content} />
+                  )}
+                  {note.attachments.length > 0 && (
+                    <div className="text-xs text-slate-500">
+                      Attachments:
+                      <ul className="list-disc pl-4">
+                        {note.attachments.map((fileId) => {
+                          const meta = fileMap.get(fileId);
+                          const href = `${API_BASE || ''}/api/files/${fileId}`;
+                          return (
+                            <li key={fileId}>
+                              <a className="text-[#1AA898]" href={href} target="_blank" rel="noreferrer">
+                                {meta?.filename || fileId}
+                              </a>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    </div>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
           <div className="bg-white rounded-lg border border-slate-200 p-5">
             <div className="flex items-center justify-between mb-3">
               <h2 className="font-semibold">Recent appointments</h2>
@@ -427,6 +556,38 @@ export default function PatientDetail() {
               </ul>
             )}
           </div>
+        </section>
+
+        <section className="bg-white rounded-lg border border-slate-200 p-5 space-y-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="font-semibold">Attachments</h2>
+              <p className="text-xs text-slate-500">Upload lab reports, images, or PDFs.</p>
+            </div>
+            <label className="btn btn-secondary px-3 py-2 text-sm cursor-pointer">
+              {fileUploading ? 'Uploading...' : 'Upload'}
+              <input type="file" multiple className="hidden" onChange={(e) => { handleUploadFiles(e.target.files); if (e.target.value) e.target.value = ''; }} disabled={fileUploading} />
+            </label>
+          </div>
+          {fileUploadStatus && <p className="text-xs text-slate-500">{fileUploadStatus}</p>}
+          {files.length === 0 ? (
+            <p className="text-sm text-slate-500">No files uploaded yet.</p>
+          ) : (
+            <ul className="space-y-2 text-sm">
+              {files.map((file) => {
+                const href = `${API_BASE || ''}/api/files/${file.id}`;
+                return (
+                  <li key={file.id} className="flex items-center justify-between border border-slate-200 rounded-lg px-3 py-2">
+                    <div>
+                      <p className="font-medium text-[#122E3A]">{file.filename}</p>
+                      <p className="text-xs text-slate-500">{file.size ? `${(file.size / 1024).toFixed(1)} KB` : ''}</p>
+                    </div>
+                    <a className="text-[#1AA898] text-xs" href={href} target="_blank" rel="noreferrer">Open</a>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
         </section>
 
         <section className="grid md:grid-cols-2 gap-6">
@@ -534,3 +695,19 @@ function formatTime(ts: number) {
 function formatDate(ts: number) {
   return new Date(ts * 1000).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
+
+function NoteBlock({ title, text }: { title: string; text?: string | null }) {
+  if (!text) return null;
+  return (
+    <div>
+      <p className="text-xs text-slate-500 uppercase tracking-wide">{title}</p>
+      <p>{text}</p>
+    </div>
+  );
+}
+
+
+
+
+
+

@@ -79,7 +79,12 @@ CREATE TABLE IF NOT EXISTS patient_notes (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   patient_id TEXT NOT NULL,
   user_id INTEGER NOT NULL,
-  content TEXT NOT NULL,
+  content TEXT,
+  soap_subjective TEXT,
+  soap_objective TEXT,
+  soap_assessment TEXT,
+  soap_plan TEXT,
+  attachments_json TEXT,
   created_at INTEGER NOT NULL,
   FOREIGN KEY(patient_id) REFERENCES patients(id),
   FOREIGN KEY(user_id) REFERENCES users(id)
@@ -107,6 +112,18 @@ CREATE TABLE IF NOT EXISTS lab_orders (
   FOREIGN KEY(patient_id) REFERENCES patients(id),
   FOREIGN KEY(user_id) REFERENCES users(id)
 );
+CREATE TABLE IF NOT EXISTS patient_files (
+  id TEXT PRIMARY KEY,
+  patient_id TEXT NOT NULL,
+  user_id INTEGER NOT NULL,
+  filename TEXT NOT NULL,
+  mime TEXT,
+  size INTEGER,
+  data BLOB NOT NULL,
+  created_at INTEGER NOT NULL,
+  FOREIGN KEY(patient_id) REFERENCES patients(id),
+  FOREIGN KEY(user_id) REFERENCES users(id)
+);
 `);
 
 const SQL = {
@@ -124,7 +141,8 @@ const SQL = {
   getPatientById: db.prepare('SELECT * FROM patients WHERE id = ? AND user_id = ?'),
   updatePatient: db.prepare('UPDATE patients SET name = ?, dob = ?, gender = ?, phone = ?, email = ?, address = ? WHERE id = ? AND user_id = ?'),
   listNotesForPatient: db.prepare('SELECT id, patient_id, content, created_at FROM patient_notes WHERE patient_id = ? AND user_id = ? ORDER BY created_at DESC LIMIT 200'),
-  insertNote: db.prepare('INSERT INTO patient_notes (patient_id, user_id, content, created_at) VALUES (?, ?, ?, ?)'),
+  listNotesDetailed: db.prepare('SELECT id, patient_id, content, soap_subjective, soap_objective, soap_assessment, soap_plan, attachments_json, created_at FROM patient_notes WHERE patient_id = ? AND user_id = ? ORDER BY created_at DESC LIMIT 200'),
+  insertNote: db.prepare('INSERT INTO patient_notes (patient_id, user_id, content, soap_subjective, soap_objective, soap_assessment, soap_plan, attachments_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'),
   listAppointmentsUpcoming: db.prepare(`SELECT a.id, a.patient_id, a.start_ts, a.reason, p.name AS patient_name FROM appointments a JOIN patients p ON p.id = a.patient_id AND p.user_id = a.user_id WHERE a.user_id = ? AND a.start_ts >= ? ORDER BY a.start_ts ASC LIMIT 200`),
   listAppointmentsForPatient: db.prepare('SELECT id, patient_id, start_ts, reason FROM appointments WHERE patient_id = ? AND user_id = ? ORDER BY start_ts DESC LIMIT 200'),
   insertAppointment: db.prepare('INSERT INTO appointments (patient_id, user_id, start_ts, reason, created_at) VALUES (?, ?, ?, ?, ?)'),
@@ -132,6 +150,9 @@ const SQL = {
   insertLabOrder: db.prepare('INSERT INTO lab_orders (patient_id, user_id, test, lab_name, lab_city, status, notes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'),
   listLabOrders: db.prepare('SELECT id, patient_id, test, lab_name, lab_city, status, notes, created_at FROM lab_orders WHERE user_id = ? ORDER BY created_at DESC LIMIT 200'),
   updateLabOrder: db.prepare('UPDATE lab_orders SET status = ?, notes = ? WHERE id = ? AND user_id = ?'),
+  listFilesForPatient: db.prepare('SELECT id, filename, mime, size, created_at FROM patient_files WHERE patient_id = ? AND user_id = ? ORDER BY created_at DESC'),
+  insertFile: db.prepare('INSERT INTO patient_files (id, patient_id, user_id, filename, mime, size, data, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'),
+  getFileById: db.prepare('SELECT * FROM patient_files WHERE id = ? AND user_id = ?'),
   // Utilities for password column (prepared later on demand)
 };
 
@@ -212,6 +233,27 @@ async function ensurePasswordAndSeed() {
   }
 }
 ensurePasswordAndSeed().catch(err => console.error('seed error', err));
+
+function ensureNoteColumns() {
+  try {
+    const columns = db.prepare("SELECT name FROM pragma_table_info('patient_notes')").all().map(c => c.name);
+    const needed = [
+      ['soap_subjective', 'ALTER TABLE patient_notes ADD COLUMN soap_subjective TEXT'],
+      ['soap_objective', 'ALTER TABLE patient_notes ADD COLUMN soap_objective TEXT'],
+      ['soap_assessment', 'ALTER TABLE patient_notes ADD COLUMN soap_assessment TEXT'],
+      ['soap_plan', 'ALTER TABLE patient_notes ADD COLUMN soap_plan TEXT'],
+      ['attachments_json', 'ALTER TABLE patient_notes ADD COLUMN attachments_json TEXT'],
+    ];
+    needed.forEach(([name, stmt]) => {
+      if (!columns.includes(name)) {
+        try { db.exec(stmt); } catch (e) { console.warn(`column add failed ${name}`, e.message); }
+      }
+    });
+  } catch (err) {
+    console.error('ensureNoteColumns error', err);
+  }
+}
+ensureNoteColumns();
 
 // Start auth: create user if needed; if enrolled -> code mode; else return QR
 app.post('/api/auth/start', async (req, res) => {
@@ -398,7 +440,19 @@ const formatPatient = (row) => ({
   address: row.address,
   createdAt: row.created_at,
 });
-const formatNote = (row) => ({ id: row.id, patientId: row.patient_id, content: row.content, createdAt: row.created_at });
+const formatNote = (row) => ({
+  id: row.id,
+  patientId: row.patient_id,
+  content: row.content,
+  soap: {
+    subjective: row.soap_subjective,
+    objective: row.soap_objective,
+    assessment: row.soap_assessment,
+    plan: row.soap_plan,
+  },
+  attachments: row.attachments_json ? JSON.parse(row.attachments_json) : [],
+  createdAt: row.created_at,
+});
 const formatAppointment = (row) => ({
   id: row.id,
   patientId: row.patient_id,
@@ -416,6 +470,7 @@ const formatLabOrder = (row) => ({
   notes: row.notes,
   createdAt: row.created_at,
 });
+const formatFile = (row) => ({ id: row.id, filename: row.filename, mime: row.mime, size: row.size, createdAt: row.created_at });
 
 // Patients
 app.get('/api/patients', requireAuthApi, (req, res) => {
@@ -435,10 +490,11 @@ app.get('/api/patients/:id', requireAuthApi, (req, res) => {
   const patientRow = SQL.getPatientById.get(req.params.id, req.userId);
   if (!patientRow) return res.status(404).json({ error: 'not_found' });
   const patient = formatPatient(patientRow);
-  const notes = SQL.listNotesForPatient.all(patient.id, req.userId).map(formatNote);
+  const notes = SQL.listNotesDetailed.all(patient.id, req.userId).map(formatNote);
   const appointments = SQL.listAppointmentsForPatient.all(patient.id, req.userId).map((row) => ({ id: row.id, patientId: row.patient_id, startTs: row.start_ts, reason: row.reason }));
   const labs = SQL.listLabOrdersForPatient.all(patient.id, req.userId).map(formatLabOrder);
-  res.json({ patient, notes, appointments, labs });
+  const files = SQL.listFilesForPatient.all(patient.id, req.userId).map(formatFile);
+  res.json({ patient, notes, appointments, labs, files });
 });
 
 app.put('/api/patients/:id', requireAuthApi, (req, res) => {
@@ -461,9 +517,22 @@ app.put('/api/patients/:id', requireAuthApi, (req, res) => {
 app.post('/api/patients/:id/notes', requireAuthApi, (req, res) => {
   const patientRow = SQL.getPatientById.get(req.params.id, req.userId);
   if (!patientRow) return res.status(404).json({ error: 'not_found' });
-  const { content } = req.body || {};
-  if (!content) return res.status(400).json({ error: 'content_required' });
-  SQL.insertNote.run(patientRow.id, req.userId, content, nowS());
+  const { content, soapSubjective, soapObjective, soapAssessment, soapPlan, attachments } = req.body || {};
+  if (!content && !soapSubjective && !soapObjective && !soapAssessment && !soapPlan) {
+    return res.status(400).json({ error: 'content_required' });
+  }
+  const attachmentIds = Array.isArray(attachments) ? attachments : [];
+  SQL.insertNote.run(
+    patientRow.id,
+    req.userId,
+    content || null,
+    soapSubjective || null,
+    soapObjective || null,
+    soapAssessment || null,
+    soapPlan || null,
+    attachmentIds.length ? JSON.stringify(attachmentIds) : null,
+    nowS(),
+  );
   res.json({ ok: true });
 });
 
@@ -523,6 +592,37 @@ app.patch('/api/lab-orders/:id', requireAuthApi, (req, res) => {
   const info = SQL.updateLabOrder.run(status, notes ?? null, Number(req.params.id), req.userId);
   if (!info.changes) return res.status(404).json({ error: 'not_found' });
   res.json({ ok: true });
+});
+
+// Patient files (stored as blobs for demo purposes)
+app.get('/api/patients/:id/files', requireAuthApi, (req, res) => {
+  const patientRow = SQL.getPatientById.get(req.params.id, req.userId);
+  if (!patientRow) return res.status(404).json({ error: 'not_found' });
+  const files = SQL.listFilesForPatient.all(patientRow.id, req.userId).map(formatFile);
+  res.json({ files });
+});
+
+app.get('/api/files/:id', requireAuthApi, (req, res) => {
+  const file = SQL.getFileById.get(req.params.id, req.userId);
+  if (!file) return res.status(404).json({ error: 'not_found' });
+  res.setHeader('Content-Type', file.mime || 'application/octet-stream');
+  res.setHeader('Content-Disposition', `inline; filename="${file.filename}"`);
+  res.send(file.data);
+});
+
+app.post('/api/patients/:id/files', requireAuthApi, async (req, res) => {
+  const patientRow = SQL.getPatientById.get(req.params.id, req.userId);
+  if (!patientRow) return res.status(404).json({ error: 'not_found' });
+  const { filename, dataUrl } = req.body || {};
+  if (!filename || !dataUrl) return res.status(400).json({ error: 'invalid_payload' });
+  const match = /^data:([^;]+);base64,(.+)$/.exec(dataUrl);
+  if (!match) return res.status(400).json({ error: 'invalid_data_url' });
+  const mime = match[1];
+  const buffer = Buffer.from(match[2], 'base64');
+  const size = buffer.length;
+  const id = crypto.randomBytes(12).toString('hex');
+  SQL.insertFile.run(id, patientRow.id, req.userId, filename, mime, size, buffer, nowS());
+  res.json({ file: { id, filename, mime, size, createdAt: nowS() } });
 });
 
 app.listen(PORT, () => {

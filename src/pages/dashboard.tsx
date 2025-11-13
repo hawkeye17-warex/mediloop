@@ -92,6 +92,7 @@ export default function DashboardPage() {
   const [patientForm, setPatientForm] = useState(PATIENT_FORM_DEFAULT);
   const [patientFeedback, setPatientFeedback] = useState<{ kind: 'error' | 'success'; message: string } | null>(null);
   const [patientSaving, setPatientSaving] = useState(false);
+  const [showAddPatientModal, setShowAddPatientModal] = useState(false);
 
   const [apptForm, setApptForm] = useState(APPOINTMENT_FORM_DEFAULT);
   const [apptStatus, setApptStatus] = useState<string | null>(null);
@@ -172,6 +173,10 @@ export default function DashboardPage() {
       setLabOrdersLoading(false);
     }
   }, [handleSessionExpired]);
+
+  const handlePatientFormChange = (field: keyof typeof PATIENT_FORM_DEFAULT, value: string) => {
+    setPatientForm((prev) => ({ ...prev, [field]: value }));
+  };
 
   useEffect(() => {
     if (!me) return;
@@ -268,8 +273,8 @@ export default function DashboardPage() {
     ];
   }, [patients.length, appointments, labOrders]);
 
-  async function handleCreatePatient(e: FormEvent) {
-    e.preventDefault();
+  async function handleCreatePatient(e?: FormEvent, closeModal = false) {
+    if (e) e.preventDefault();
     setPatientFeedback(null);
     if (!patientForm.name.trim()) {
       setPatientFeedback({ kind: 'error', message: 'Name is required.' });
@@ -284,6 +289,7 @@ export default function DashboardPage() {
       setPatientForm(PATIENT_FORM_DEFAULT);
       setPatientFeedback({ kind: 'success', message: 'Patient saved.' });
       await loadPatients();
+      if (closeModal) setShowAddPatientModal(false);
     } catch (err: any) {
       setPatientFeedback({ kind: 'error', message: err?.message || 'Unable to add patient' });
     } finally {
@@ -374,6 +380,9 @@ export default function DashboardPage() {
             <div className="font-semibold">MediLoop</div>
             <div className="flex items-center gap-3">
               <input className="hidden md:block w-64 text-sm rounded-md border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#1AA898]" placeholder="Search patients or notes" />
+              <button className="hidden md:inline-flex items-center gap-2 px-3 py-2 rounded-md border border-[#1AA898] text-[#1AA898] text-sm" onClick={() => setShowAddPatientModal(true)}>
+                + Patient
+              </button>
               <button className="w-9 h-9 rounded-full border border-slate-200 bg-white hover:bg-slate-50" title="Notifications" aria-label="Notifications">
                 🔔
               </button>
@@ -576,45 +585,13 @@ export default function DashboardPage() {
             </section>
             <section className="bg-white rounded-xl border border-slate-200 p-5">
               <h2 className="font-semibold mb-4">Add patient</h2>
-              <form className="space-y-3" onSubmit={handleCreatePatient}>
-                <label className="block text-sm">
-                  <span className="font-medium">Full name</span>
-                  <input className="mt-1 w-full" value={patientForm.name} onChange={(e) => setPatientForm((prev) => ({ ...prev, name: e.target.value }))} />
-                </label>
-                <div className="grid grid-cols-2 gap-3">
-                  <label className="block text-sm">
-                    <span className="font-medium">DOB</span>
-                    <input type="date" className="mt-1 w-full" value={patientForm.dob} onChange={(e) => setPatientForm((prev) => ({ ...prev, dob: e.target.value }))} />
-                  </label>
-                  <label className="block text-sm">
-                    <span className="font-medium">Gender</span>
-                    <select className="mt-1 w-full" value={patientForm.gender} onChange={(e) => setPatientForm((prev) => ({ ...prev, gender: e.target.value }))}>
-                      <option value="Female">Female</option>
-                      <option value="Male">Male</option>
-                      <option value="Non-binary">Non-binary</option>
-                      <option value="Other">Other</option>
-                    </select>
-                  </label>
-                </div>
-                <label className="block text-sm">
-                  <span className="font-medium">Phone</span>
-                  <input className="mt-1 w-full" value={patientForm.phone} onChange={(e) => setPatientForm((prev) => ({ ...prev, phone: e.target.value }))} />
-                </label>
-                <label className="block text-sm">
-                  <span className="font-medium">Email</span>
-                  <input type="email" className="mt-1 w-full" value={patientForm.email} onChange={(e) => setPatientForm((prev) => ({ ...prev, email: e.target.value }))} />
-                </label>
-                <label className="block text-sm">
-                  <span className="font-medium">Address</span>
-                  <textarea className="mt-1 w-full" rows={2} value={patientForm.address} onChange={(e) => setPatientForm((prev) => ({ ...prev, address: e.target.value }))} />
-                </label>
-                {patientFeedback && (
-                  <p className={`text-xs ${patientFeedback.kind === 'error' ? 'text-red-600' : 'text-emerald-600'}`}>{patientFeedback.message}</p>
-                )}
-                <button type="submit" className="w-full btn btn-primary py-2" disabled={patientSaving}>
-                  {patientSaving ? 'Saving…' : 'Save patient'}
-                </button>
-              </form>
+              <AddPatientForm
+                form={patientForm}
+                onChange={handlePatientFormChange}
+                onSubmit={(e) => handleCreatePatient(e, false)}
+                feedback={patientFeedback}
+                saving={patientSaving}
+              />
             </section>
           </div>
         )}
@@ -661,6 +638,24 @@ export default function DashboardPage() {
           </section>
         )}
       </main>
+      {showAddPatientModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-semibold">New patient</h2>
+              <button className="text-slate-500 hover:text-slate-900" onClick={() => setShowAddPatientModal(false)}>×</button>
+            </div>
+            <AddPatientForm
+              form={patientForm}
+              onChange={handlePatientFormChange}
+              onSubmit={(e) => handleCreatePatient(e, true)}
+              feedback={patientFeedback}
+              saving={patientSaving}
+              submitLabel="Create patient"
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -672,6 +667,61 @@ function StatCard({ value, label, accent }: { value: string; label: string; acce
       <div className="text-slate-500 text-sm mt-1">{label}</div>
       <div className="mt-3 h-1.5 rounded-full" style={{ background: accent }} />
     </div>
+  );
+}
+
+type PatientFormState = typeof PATIENT_FORM_DEFAULT;
+
+type AddPatientFormProps = {
+  form: PatientFormState;
+  onChange: (field: keyof PatientFormState, value: string) => void;
+  onSubmit: (e: FormEvent) => void;
+  feedback: { kind: 'error' | 'success'; message: string } | null;
+  saving: boolean;
+  submitLabel?: string;
+};
+
+function AddPatientForm({ form, onChange, onSubmit, feedback, saving, submitLabel = 'Save patient' }: AddPatientFormProps) {
+  return (
+    <form className="space-y-3" onSubmit={onSubmit}>
+      <label className="block text-sm">
+        <span className="font-medium">Full name</span>
+        <input className="mt-1 w-full" value={form.name} onChange={(e) => onChange('name', e.target.value)} />
+      </label>
+      <div className="grid grid-cols-2 gap-3">
+        <label className="block text-sm">
+          <span className="font-medium">DOB</span>
+          <input type="date" className="mt-1 w-full" value={form.dob} onChange={(e) => onChange('dob', e.target.value)} />
+        </label>
+        <label className="block text-sm">
+          <span className="font-medium">Gender</span>
+          <select className="mt-1 w-full" value={form.gender} onChange={(e) => onChange('gender', e.target.value)}>
+            <option value="Female">Female</option>
+            <option value="Male">Male</option>
+            <option value="Non-binary">Non-binary</option>
+            <option value="Other">Other</option>
+          </select>
+        </label>
+      </div>
+      <label className="block text-sm">
+        <span className="font-medium">Phone</span>
+        <input className="mt-1 w-full" value={form.phone} onChange={(e) => onChange('phone', e.target.value)} />
+      </label>
+      <label className="block text-sm">
+        <span className="font-medium">Email</span>
+        <input type="email" className="mt-1 w-full" value={form.email} onChange={(e) => onChange('email', e.target.value)} />
+      </label>
+      <label className="block text-sm">
+        <span className="font-medium">Address</span>
+        <textarea className="mt-1 w-full" rows={2} value={form.address} onChange={(e) => onChange('address', e.target.value)} />
+      </label>
+      {feedback && (
+        <p className={`text-xs ${feedback.kind === 'error' ? 'text-red-600' : 'text-emerald-600'}`}>{feedback.message}</p>
+      )}
+      <button type="submit" className="w-full btn btn-primary py-2" disabled={saving}>
+        {saving ? 'Saving…' : submitLabel}
+      </button>
+    </form>
   );
 }
 
