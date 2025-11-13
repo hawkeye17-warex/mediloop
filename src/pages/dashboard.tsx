@@ -43,8 +43,28 @@ type LabOrder = {
 };
 type LabOrdersRes = { labOrders: LabOrder[] };
 
+type Referral = {
+  id: string;
+  patientId: string;
+  patientName: string;
+  specialistId?: string | null;
+  specialistName: string;
+  specialistOrg?: string | null;
+  status: string;
+  reason?: string | null;
+  notes?: string | null;
+  urgency?: string | null;
+  createdAt: number;
+  updatedAt: number;
+};
+type ReferralsRes = { referrals: Referral[] };
+
+type Specialist = { id: string; name: string; org?: string | null; specialty: string; city: string; contact?: string | null };
+type SpecialistsRes = { specialists: Specialist[] };
+
 const LAB_TESTS = ['Bloodwork', 'MRI', 'X-Ray', 'Ultrasound'];
 const LAB_STATUSES = ['requested', 'scheduled', 'completed', 'cancelled'] as const;
+const REFERRAL_STATUSES = ['pending', 'submitted', 'accepted', 'scheduled', 'closed'] as const;
 const ISSUE_MEDICATIONS: Record<string, string[]> = {
   Hypertension: ['Lisinopril', 'Amlodipine', 'Losartan'],
   'Type 2 Diabetes': ['Metformin', 'Empagliflozin', 'Semaglutide'],
@@ -76,6 +96,28 @@ const APPOINTMENT_FORM_DEFAULT = {
   medication: '',
 };
 
+type ReferralFormState = {
+  patientId: string;
+  specialistQuery: string;
+  specialistId: string;
+  specialistName: string;
+  specialistOrg: string;
+  urgency: string;
+  reason: string;
+  notes: string;
+};
+
+const REFERRAL_FORM_DEFAULT: ReferralFormState = {
+  patientId: '',
+  specialistQuery: '',
+  specialistId: '',
+  specialistName: '',
+  specialistOrg: '',
+  urgency: 'routine',
+  reason: '',
+  notes: '',
+};
+
 export default function DashboardPage() {
   const navigate = useNavigate();
   const [me, setMe] = useState<string | null>(null);
@@ -88,6 +130,8 @@ export default function DashboardPage() {
   const [appointmentsLoading, setAppointmentsLoading] = useState(false);
   const [labOrders, setLabOrders] = useState<LabOrder[]>([]);
   const [labOrdersLoading, setLabOrdersLoading] = useState(false);
+  const [referrals, setReferrals] = useState<Referral[]>([]);
+  const [referralsLoading, setReferralsLoading] = useState(false);
 
   const [patientForm, setPatientForm] = useState(PATIENT_FORM_DEFAULT);
   const [patientFeedback, setPatientFeedback] = useState<{ kind: 'error' | 'success'; message: string } | null>(null);
@@ -100,6 +144,11 @@ export default function DashboardPage() {
   const [labLoading, setLabLoading] = useState(false);
   const [labError, setLabError] = useState<string | null>(null);
   const [selectedLab, setSelectedLab] = useState<Lab | null>(null);
+
+  const [referralForm, setReferralForm] = useState<ReferralFormState>(REFERRAL_FORM_DEFAULT);
+  const [referralMessage, setReferralMessage] = useState<string | null>(null);
+  const [specialistResults, setSpecialistResults] = useState<Specialist[]>([]);
+  const [specialistLoading, setSpecialistLoading] = useState(false);
 
   const handleSessionExpired = useCallback(() => {
     setMe(null);
@@ -174,8 +223,59 @@ export default function DashboardPage() {
     }
   }, [handleSessionExpired]);
 
+  const loadReferrals = useCallback(async () => {
+    setReferralsLoading(true);
+    try {
+      const res = await apiFetch('/api/referrals');
+      if (res.status === 401) return handleSessionExpired();
+      if (!res.ok) throw new Error('Failed to load referrals');
+      const data = await getJson<ReferralsRes>(res);
+      setReferrals(data.referrals);
+    } catch (err) {
+      console.error(err);
+      setReferrals([]);
+    } finally {
+      setReferralsLoading(false);
+    }
+  }, [handleSessionExpired]);
+
+  const searchSpecialists = useCallback(async (query: string) => {
+    const term = query.trim();
+    if (term.length < 2) {
+      setSpecialistResults([]);
+      return;
+    }
+    setSpecialistLoading(true);
+    try {
+      const res = await apiFetch(`/api/specialists?q=${encodeURIComponent(term)}`);
+      if (res.status === 401) return handleSessionExpired();
+      if (!res.ok) throw new Error('Failed to search specialists');
+      const data = await getJson<SpecialistsRes>(res);
+      setSpecialistResults(data.specialists);
+    } catch (err) {
+      console.error(err);
+      setSpecialistResults([]);
+    } finally {
+      setSpecialistLoading(false);
+    }
+  }, [handleSessionExpired]);
+
   const handlePatientFormChange = (field: keyof typeof PATIENT_FORM_DEFAULT, value: string) => {
     setPatientForm((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const handleReferralField = (field: keyof ReferralFormState, value: string) => {
+    if (field === 'specialistQuery') {
+      setReferralForm((prev) => ({
+        ...prev,
+        specialistQuery: value,
+        specialistName: value,
+        specialistId: '',
+        specialistOrg: value ? prev.specialistOrg : '',
+      }));
+      return;
+    }
+    setReferralForm((prev) => ({ ...prev, [field]: value }));
   };
 
   useEffect(() => {
@@ -183,12 +283,36 @@ export default function DashboardPage() {
     loadPatients();
     loadAppointments();
     loadLabOrders();
-  }, [me, loadPatients, loadAppointments, loadLabOrders]);
+    loadReferrals();
+  }, [me, loadPatients, loadAppointments, loadLabOrders, loadReferrals]);
 
   useEffect(() => {
     if (patients.length === 0) return;
     setApptForm((prev) => (prev.patientId ? prev : { ...prev, patientId: patients[0].id }));
   }, [patients]);
+
+  useEffect(() => {
+    if (patients.length === 0) return;
+    setReferralForm((prev) => (prev.patientId ? prev : { ...prev, patientId: patients[0].id }));
+  }, [patients]);
+
+  useEffect(() => {
+    const q = referralForm.specialistQuery.trim();
+    if (q.length < 2) {
+      setSpecialistResults([]);
+      return;
+    }
+    const handle = setTimeout(() => {
+      void searchSpecialists(q);
+    }, 300);
+    return () => clearTimeout(handle);
+  }, [referralForm.specialistQuery, searchSpecialists]);
+
+  useEffect(() => {
+    if (!referralMessage) return;
+    const handle = setTimeout(() => setReferralMessage(null), 4000);
+    return () => clearTimeout(handle);
+  }, [referralMessage]);
 
   useEffect(() => {
     if (!apptForm.requireLab) {
@@ -262,16 +386,16 @@ export default function DashboardPage() {
   const metrics = useMemo(() => {
     const uniquePatients = patients.length;
     const upcomingWeek = appointments.filter((a) => a.startTs * 1000 <= Date.now() + 7 * 24 * 60 * 60 * 1000).length;
-    const labsPending = labOrders.filter((l) => l.status !== 'completed' && l.status !== 'cancelled').length;
+    const referralsActive = referrals.filter((r) => r.status !== 'closed').length;
     const today = new Date().toDateString();
     const todayVisits = appointments.filter((a) => new Date(a.startTs * 1000).toDateString() === today).length;
     return [
       { label: 'Total Patients', value: uniquePatients.toString(), accent: '#1AA898' },
       { label: 'Today’s Visits', value: todayVisits.toString(), accent: '#122E3A' },
       { label: 'Next 7 Days', value: upcomingWeek.toString(), accent: '#BCC46A' },
-      { label: 'Lab Follow-ups', value: labsPending.toString(), accent: '#FBECB8' },
+      { label: 'Active Referrals', value: referralsActive.toString(), accent: '#FB923C' },
     ];
-  }, [patients.length, appointments, labOrders]);
+  }, [patients.length, appointments, referrals]);
 
   async function handleCreatePatient(e?: FormEvent, closeModal = false) {
     if (e) e.preventDefault();
@@ -318,7 +442,7 @@ export default function DashboardPage() {
     if (apptForm.requireLab) reasonParts.push(`Lab: ${apptForm.labTest}`);
     if (apptForm.requireMeds && apptForm.issueKey) reasonParts.push(`Rx: ${apptForm.issueKey}`);
     const noteContent = apptForm.requireMeds && apptForm.issueKey
-      ? `Plan: ${apptForm.issueKey} ? ${apptForm.medication || 'tbd'}`
+      ? `Plan: ${apptForm.issueKey} -> ${apptForm.medication || 'tbd'}`
       : undefined;
     const labPayload = apptForm.requireLab && apptForm.labTest
       ? {
@@ -349,6 +473,58 @@ export default function DashboardPage() {
       await Promise.all([loadAppointments(), loadLabOrders()]);
     } catch (err: any) {
       setApptStatus(err?.message || 'Unable to schedule appointment');
+    }
+  }
+
+  async function handleCreateReferral(e: FormEvent) {
+    e.preventDefault();
+    setReferralMessage(null);
+    const patientId = referralForm.patientId || patients[0]?.id;
+    if (!patientId) {
+      setReferralMessage('Add a patient first.');
+      return;
+    }
+    if (!referralForm.specialistName.trim()) {
+      setReferralMessage('Choose a specialist.');
+      return;
+    }
+    try {
+      const res = await apiFetch('/api/referrals', {
+        method: 'POST',
+        json: {
+          patientId,
+          specialistId: referralForm.specialistId || undefined,
+          specialistName: referralForm.specialistName.trim(),
+          specialistOrg: referralForm.specialistOrg || undefined,
+          urgency: referralForm.urgency || 'routine',
+          reason: referralForm.reason.trim() || undefined,
+          notes: referralForm.notes.trim() || undefined,
+        },
+      });
+      const info = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(info?.error || 'Unable to create referral');
+      setReferralMessage('Referral submitted.');
+      setReferralForm(() => ({
+        ...REFERRAL_FORM_DEFAULT,
+        patientId,
+      }));
+      setSpecialistResults([]);
+      await loadReferrals();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unable to create referral';
+      setReferralMessage(message);
+    }
+  }
+
+  async function handleReferralStatus(id: string, status: string) {
+    try {
+      const res = await apiFetch(`/api/referrals/${id}`, { method: 'PATCH', json: { status } });
+      const info = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(info?.error || 'Unable to update referral');
+      await loadReferrals();
+    } catch (err) {
+      console.error(err);
+      setReferralMessage(err instanceof Error ? err.message : 'Unable to update referral');
     }
   }
 
@@ -431,6 +607,17 @@ export default function DashboardPage() {
                 <LabOrdersSnapshot labOrders={labOrders} loading={labOrdersLoading} patientMap={patientMap} onUpdateStatus={handleLabStatusChange} />
               </section>
             </div>
+
+            <section className="bg-white rounded-xl border border-slate-200 p-4">
+              <div className="flex items-center justify-between mb-3">
+                <div>
+                  <h2 className="font-semibold">Referrals overview</h2>
+                  <p className="text-xs text-slate-500">Recent outbound referrals and statuses</p>
+                </div>
+                <button className="text-sm text-[#1AA898]" onClick={() => setTab('Referrals')}>Open workspace</button>
+              </div>
+              <ReferralSnapshot referrals={referrals} loading={referralsLoading} />
+            </section>
 
             <section className="grid lg:grid-cols-3 gap-6">
               <div className="lg:col-span-2 bg-white rounded-xl border border-slate-200 p-4">
@@ -597,10 +784,44 @@ export default function DashboardPage() {
         )}
 
         {tab === 'Referrals' && (
-          <section className="bg-white rounded-xl border border-slate-200 p-5">
-            <h2 className="font-semibold mb-4">Referral queue</h2>
-            <ReferralList patients={patients} detailed />
-          </section>
+          <div className="grid lg:grid-cols-3 gap-6">
+            <section className="bg-white rounded-xl border border-slate-200 p-5 space-y-4">
+              <h2 className="font-semibold">Create referral</h2>
+              <ReferralComposer
+                patients={patients}
+                form={referralForm}
+                onChange={handleReferralField}
+                onSubmit={handleCreateReferral}
+                specialists={specialistResults}
+                specialistLoading={specialistLoading}
+                message={referralMessage}
+                onSelectSpecialist={(spec) => {
+                  setReferralForm((prev) => ({
+                    ...prev,
+                    specialistId: spec.id,
+                    specialistName: spec.name,
+                    specialistOrg: spec.org || '',
+                    specialistQuery: spec.name,
+                  }));
+                  setSpecialistResults([]);
+                }}
+              />
+            </section>
+            <section className="lg:col-span-2 bg-white rounded-xl border border-slate-200 p-5">
+              <div className="flex items-center justify-between mb-4">
+                <div>
+                  <h2 className="font-semibold">Referral queue</h2>
+                  <p className="text-xs text-slate-500">Track pending and accepted referrals.</p>
+                </div>
+                <button className="text-xs text-[#1AA898]" onClick={loadReferrals}>Refresh</button>
+              </div>
+              <ReferralTable
+                referrals={referrals}
+                loading={referralsLoading}
+                onUpdateStatus={handleReferralStatus}
+              />
+            </section>
+          </div>
         )}
 
         {tab === 'Schedule' && (
@@ -798,48 +1019,169 @@ function StatusBadge({ status }: { status: string }) {
   return <span className={`inline-flex items-center px-2 py-0.5 rounded-full border text-[11px] ${colors[status] || 'bg-slate-50 text-slate-600 border-slate-200'}`}>{status}</span>;
 }
 
-function ReferralList({ patients, detailed = false }: { patients: Patient[]; detailed?: boolean }) {
-  const items = useMemo(() => {
-    if (!patients.length) {
-      return [
-        { patient: 'No patients yet', status: 'Draft', dept: '—', urgency: 'low' as const },
-      ];
-    }
-    return patients.slice(0, 5).map((p, index) => ({
-      patient: p.name,
-      status: ['Pending', 'Sent', 'Accepted'][index % 3],
-      dept: ['Cardiology', 'Dermatology', 'Neurology'][index % 3],
-      urgency: (['normal', 'high', 'low'][index % 3] as 'normal' | 'high' | 'low'),
-    }));
-  }, [patients]);
-
-  return (
-    <div className="space-y-3">
-      {items.map((item) => (
-        <div key={`${item.patient}-${item.dept}`} className="border border-slate-200 rounded-lg p-3">
-          <div className="flex items-center justify-between">
-            <p className="font-semibold text-[#122E3A]">{item.patient}</p>
-            <span className={`text-xs px-2 py-1 rounded-full border ${item.status === 'Accepted' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : item.status === 'Pending' ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-blue-50 text-blue-700 border-blue-200'}`}>
-              {item.status}
-            </span>
-          </div>
-          {detailed && (
-            <div className="text-xs text-slate-500 mt-1">
-              Department: {item.dept} · Urgency: {item.urgency}
-            </div>
-          )}
-        </div>
-      ))}
-    </div>
-  );
-}
-
 function formatTime(ts: number) {
   return new Date(ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
 function formatDate(ts: number) {
   return new Date(ts * 1000).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+function ReferralSnapshot({ referrals, loading }: { referrals: Referral[]; loading: boolean }) {
+  if (loading) return <p className="text-sm text-slate-500">Loading referrals…</p>;
+  if (referrals.length === 0) return <p className="text-sm text-slate-500">No referrals yet.</p>;
+  return (
+    <ul className="space-y-2 text-sm">
+      {referrals.slice(0, 4).map((ref) => (
+        <li key={ref.id} className="border border-slate-200 rounded-lg px-3 py-2 flex items-center justify-between">
+          <div>
+            <p className="font-semibold text-[#122E3A]">{ref.patientName}</p>
+            <p className="text-xs text-slate-500">{ref.specialistName}</p>
+          </div>
+          <span className="text-xs text-slate-500 capitalize">{ref.status}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+type ReferralComposerProps = {
+  patients: Patient[];
+  form: ReferralFormState;
+  specialists: Specialist[];
+  specialistLoading: boolean;
+  message: string | null;
+  onChange: (field: keyof ReferralFormState, value: string) => void;
+  onSubmit: (e: FormEvent) => void;
+  onSelectSpecialist: (spec: Specialist) => void;
+};
+
+function ReferralComposer({
+  patients,
+  form,
+  specialists,
+  specialistLoading,
+  message,
+  onChange,
+  onSubmit,
+  onSelectSpecialist,
+}: ReferralComposerProps) {
+  return (
+    <form className="space-y-3" onSubmit={onSubmit}>
+      <label className="block text-sm">
+        <span className="font-medium">Patient</span>
+        <select className="mt-1 w-full" value={form.patientId} onChange={(e) => onChange('patientId', e.target.value)}>
+          {patients.map((p) => (
+            <option key={p.id} value={p.id}>{p.name}</option>
+          ))}
+        </select>
+      </label>
+      <label className="block text-sm">
+        <span className="font-medium">Specialist</span>
+        <input
+          className="mt-1 w-full"
+          placeholder="Search cardiology, Dr. Ava..."
+          value={form.specialistQuery}
+          onChange={(e) => {
+            onChange('specialistQuery', e.target.value);
+            onChange('specialistName', e.target.value);
+          }}
+        />
+      </label>
+      {specialistLoading && <p className="text-xs text-slate-500">Searching…</p>}
+      {!specialistLoading && specialists.length > 0 && (
+        <ul className="border border-slate-200 rounded-lg divide-y max-h-40 overflow-auto text-sm">
+          {specialists.map((spec) => (
+            <li key={spec.id}>
+              <button
+                type="button"
+                className="w-full text-left px-3 py-2 hover:bg-slate-50"
+                onClick={() => onSelectSpecialist(spec)}
+              >
+                <p className="font-medium text-[#122E3A]">{spec.name}</p>
+                <p className="text-xs text-slate-500">{spec.specialty} · {spec.city}</p>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <label className="block text-sm">
+        <span className="font-medium">Clinic / Organization</span>
+        <input className="mt-1 w-full" value={form.specialistOrg} onChange={(e) => onChange('specialistOrg', e.target.value)} />
+      </label>
+      <div className="grid grid-cols-2 gap-3 text-sm">
+        <label className="block">
+          <span className="font-medium">Urgency</span>
+          <select className="mt-1 w-full" value={form.urgency} onChange={(e) => onChange('urgency', e.target.value)}>
+            <option value="routine">Routine</option>
+            <option value="urgent">Urgent</option>
+            <option value="stat">STAT</option>
+          </select>
+        </label>
+        <label className="block">
+          <span className="font-medium">Reason</span>
+          <input className="mt-1 w-full" value={form.reason} onChange={(e) => onChange('reason', e.target.value)} />
+        </label>
+      </div>
+      <label className="block text-sm">
+        <span className="font-medium">Notes</span>
+        <textarea className="mt-1 w-full" rows={3} value={form.notes} onChange={(e) => onChange('notes', e.target.value)} />
+      </label>
+      {message && <p className="text-xs text-slate-500">{message}</p>}
+      <button type="submit" className="w-full btn btn-primary py-2">Send referral</button>
+    </form>
+  );
+}
+
+type ReferralTableProps = {
+  referrals: Referral[];
+  loading: boolean;
+  onUpdateStatus: (id: string, status: string) => Promise<void> | void;
+};
+
+function ReferralTable({ referrals, loading, onUpdateStatus }: ReferralTableProps) {
+  if (loading) return <p className="text-sm text-slate-500">Loading referrals…</p>;
+  if (referrals.length === 0) return <p className="text-sm text-slate-500">No referrals yet.</p>;
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead className="text-left text-slate-500">
+          <tr className="border-b border-slate-200">
+            <th className="px-3 py-2">Patient</th>
+            <th className="px-3 py-2">Specialist</th>
+            <th className="px-3 py-2">Status</th>
+            <th className="px-3 py-2">Updated</th>
+          </tr>
+        </thead>
+        <tbody>
+          {referrals.map((ref) => (
+            <tr key={ref.id} className="border-b border-slate-100">
+              <td className="px-3 py-2">
+                <p className="font-medium text-[#122E3A]">{ref.patientName}</p>
+                <p className="text-xs text-slate-500">Urgency: {ref.urgency || 'routine'}</p>
+              </td>
+              <td className="px-3 py-2 text-slate-600">
+                <div>{ref.specialistName}</div>
+                <div className="text-xs text-slate-500">{ref.specialistOrg || '—'}</div>
+              </td>
+              <td className="px-3 py-2">
+                <select
+                  className="text-xs border border-slate-300 rounded-md"
+                  value={ref.status}
+                  onChange={(e) => onUpdateStatus(ref.id, e.target.value)}
+                >
+                  {REFERRAL_STATUSES.map((status) => (
+                    <option key={status} value={status}>{status}</option>
+                  ))}
+                </select>
+              </td>
+              <td className="px-3 py-2 text-xs text-slate-500">{formatDate(ref.updatedAt)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
 }
 
 function formatRelative(tsSeconds: number) {

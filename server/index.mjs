@@ -112,6 +112,22 @@ CREATE TABLE IF NOT EXISTS lab_orders (
   FOREIGN KEY(patient_id) REFERENCES patients(id),
   FOREIGN KEY(user_id) REFERENCES users(id)
 );
+CREATE TABLE IF NOT EXISTS referrals (
+  id TEXT PRIMARY KEY,
+  user_id INTEGER NOT NULL,
+  patient_id TEXT NOT NULL,
+  specialist_id TEXT,
+  specialist_name TEXT NOT NULL,
+  specialist_org TEXT,
+  status TEXT NOT NULL DEFAULT 'pending',
+  reason TEXT,
+  notes TEXT,
+  urgency TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  FOREIGN KEY(patient_id) REFERENCES patients(id),
+  FOREIGN KEY(user_id) REFERENCES users(id)
+);
 CREATE TABLE IF NOT EXISTS patient_files (
   id TEXT PRIMARY KEY,
   patient_id TEXT NOT NULL,
@@ -153,6 +169,10 @@ const SQL = {
   listFilesForPatient: db.prepare('SELECT id, filename, mime, size, created_at FROM patient_files WHERE patient_id = ? AND user_id = ? ORDER BY created_at DESC'),
   insertFile: db.prepare('INSERT INTO patient_files (id, patient_id, user_id, filename, mime, size, data, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'),
   getFileById: db.prepare('SELECT * FROM patient_files WHERE id = ? AND user_id = ?'),
+  listReferrals: db.prepare(`SELECT r.*, p.name AS patient_name FROM referrals r JOIN patients p ON p.id = r.patient_id AND p.user_id = r.user_id WHERE r.user_id = ? ORDER BY r.created_at DESC LIMIT 200`),
+  insertReferral: db.prepare('INSERT INTO referrals (id, user_id, patient_id, specialist_id, specialist_name, specialist_org, status, reason, notes, urgency, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'),
+  updateReferralStatus: db.prepare('UPDATE referrals SET status = ?, notes = ?, updated_at = ? WHERE id = ? AND user_id = ?'),
+  getReferralById: db.prepare('SELECT * FROM referrals WHERE id = ? AND user_id = ?'),
   // Utilities for password column (prepared later on demand)
 };
 
@@ -429,6 +449,13 @@ const LABS = [
   { name: 'Broadway Imaging', city: 'Toronto', tests: ['MRI', 'CT'] },
   { name: 'Harbour Labs', city: 'Vancouver', tests: ['Bloodwork', 'X-Ray'] },
 ];
+const SPECIALISTS = [
+  { id: 'cardio-lakeview', name: 'Dr. Ava Norris', org: 'Lakeview Cardiology', specialty: 'Cardiology', city: 'Winnipeg', contact: 'cardio@lakeview.ca' },
+  { id: 'ortho-clarity', name: 'Dr. Liam Patel', org: 'Clarity Orthopedics', specialty: 'Orthopedics', city: 'Toronto', contact: 'referrals@clarityortho.ca' },
+  { id: 'neuro-meridian', name: 'Dr. Chloe Tran', org: 'Meridian Neuro Centre', specialty: 'Neurology', city: 'Vancouver', contact: 'neuro@meridian.ca' },
+  { id: 'derm-sunrise', name: 'Dr. Noah Reyes', org: 'Sunrise Dermatology', specialty: 'Dermatology', city: 'Calgary', contact: 'hello@sunrisederm.ca' },
+  { id: 'endo-clarion', name: 'Dr. Mila Chen', org: 'Clarion Endocrine Clinic', specialty: 'Endocrinology', city: 'Ottawa', contact: 'referrals@clarionendo.ca' },
+];
 
 const formatPatient = (row) => ({
   id: row.id,
@@ -471,6 +498,20 @@ const formatLabOrder = (row) => ({
   createdAt: row.created_at,
 });
 const formatFile = (row) => ({ id: row.id, filename: row.filename, mime: row.mime, size: row.size, createdAt: row.created_at });
+const formatReferral = (row) => ({
+  id: row.id,
+  patientId: row.patient_id,
+  patientName: row.patient_name,
+  specialistId: row.specialist_id,
+  specialistName: row.specialist_name,
+  specialistOrg: row.specialist_org,
+  status: row.status,
+  reason: row.reason,
+  notes: row.notes,
+  urgency: row.urgency,
+  createdAt: row.created_at,
+  updatedAt: row.updated_at,
+});
 
 // Patients
 app.get('/api/patients', requireAuthApi, (req, res) => {
@@ -623,6 +664,60 @@ app.post('/api/patients/:id/files', requireAuthApi, async (req, res) => {
   const id = crypto.randomBytes(12).toString('hex');
   SQL.insertFile.run(id, patientRow.id, req.userId, filename, mime, size, buffer, nowS());
   res.json({ file: { id, filename, mime, size, createdAt: nowS() } });
+});
+
+// Specialist directory (static sample data for now)
+app.get('/api/specialists', requireAuthApi, (req, res) => {
+  const q = String(req.query.q || '').trim().toLowerCase();
+  let results = SPECIALISTS;
+  if (q) {
+    results = SPECIALISTS.filter((spec) =>
+      spec.name.toLowerCase().includes(q) ||
+      spec.specialty.toLowerCase().includes(q) ||
+      spec.city.toLowerCase().includes(q) ||
+      spec.org.toLowerCase().includes(q)
+    );
+  }
+  res.json({ specialists: results.slice(0, 15) });
+});
+
+// Referrals
+app.get('/api/referrals', requireAuthApi, (req, res) => {
+  const rows = SQL.listReferrals.all(req.userId);
+  res.json({ referrals: rows.map(formatReferral) });
+});
+
+app.post('/api/referrals', requireAuthApi, (req, res) => {
+  const { patientId, specialistId, specialistName, specialistOrg, reason, notes, urgency } = req.body || {};
+  if (!patientId || !specialistName) return res.status(400).json({ error: 'invalid_payload' });
+  const patientRow = SQL.getPatientById.get(patientId, req.userId);
+  if (!patientRow) return res.status(400).json({ error: 'invalid_patient' });
+  const id = crypto.randomBytes(8).toString('hex');
+  const now = nowS();
+  const specMeta = SPECIALISTS.find((s) => s.id === specialistId);
+  SQL.insertReferral.run(
+    id,
+    req.userId,
+    patientRow.id,
+    specialistId || null,
+    specialistName,
+    specialistOrg || specMeta?.org || null,
+    'pending',
+    reason || null,
+    notes || null,
+    urgency || null,
+    now,
+    now
+  );
+  res.json({ id });
+});
+
+app.patch('/api/referrals/:id', requireAuthApi, (req, res) => {
+  const { status, notes } = req.body || {};
+  if (!status) return res.status(400).json({ error: 'status_required' });
+  const info = SQL.updateReferralStatus.run(status, notes ?? null, nowS(), req.params.id, req.userId);
+  if (!info.changes) return res.status(404).json({ error: 'not_found' });
+  res.json({ ok: true });
 });
 
 app.listen(PORT, () => {
