@@ -4,7 +4,6 @@ import { Pool } from 'pg';
 import argon2 from 'argon2';
 import { authenticator } from 'otplib';
 import crypto from 'crypto';
-import qrcode from 'qrcode';
 
 const PORT = Number(process.env.PORT || 5174);
 const SESSION_COOKIE = 'ml_session';
@@ -179,17 +178,37 @@ app.post(
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return res.status(400).json({ error: 'invalid_email' });
     let user = await getUserByEmail(email);
     if (!user) user = await createUser(email);
-    if (user.totp_enabled) return res.json({ mode: 'code' });
-    let secret;
+
+    if (user.totp_enabled && !force) {
+      return res.json({ mode: 'code' });
+    }
+
+    if (force) {
+      await query(
+        'update users set totp_enabled=false, totp_secret_encrypted=null, totp_temp_secret_encrypted=null where id=$1',
+        [user.id]
+      );
+      user.totp_enabled = false;
+      user.totp_secret_encrypted = null;
+      user.totp_temp_secret_encrypted = null;
+    }
+
+    let secret = null;
     if (user.totp_temp_secret_encrypted && !force) {
-      secret = decrypt(user.totp_temp_secret_encrypted);
-    } else {
+      try {
+        secret = decrypt(user.totp_temp_secret_encrypted);
+      } catch (err) {
+        await query('update users set totp_temp_secret_encrypted=null where id=$1', [user.id]);
+        secret = null;
+      }
+    }
+    if (!secret) {
       secret = authenticator.generateSecret();
       await query('update users set totp_temp_secret_encrypted=$1 where id=$2', [encrypt(secret), user.id]);
     }
+
     const otpauthUrl = authenticator.keyuri(email, 'MediLoop', secret);
-    const qrDataUrl = await qrcode.toDataURL(otpauthUrl);
-    res.json({ mode: 'enroll', otpauthUrl, qrDataUrl, devSecret: DEBUG ? secret : undefined });
+    res.json({ mode: 'enroll', otpauthUrl, secret });
   })
 );
 
