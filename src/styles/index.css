@@ -1,0 +1,82 @@
+/* Tailwind entry */
+@import "tailwindcss";
+
+/*
+  MediLoop Design System
+  - Palette tuned for healthcare SaaS
+  - Aurora background + glass surfaces
+  - Button, chip, and card utilities
+*/
+
+:root {
+  --ink: #122E3A;     /* deep clinical navy */
+  --teal: #1AA898;    /* primary / action */
+  --olive: #BCC46A;   /* accent warm */
+  --cream: #FBECB8;   /* soft accent */
+  --bg: #f8fbfb;      /* app background */
+  --surface: #ffffff; /* card surface */
+}
+
+html { scroll-behavior: smooth; }
+
+@layer base {
+  body {
+    @apply antialiased leading-relaxed text-slate-800;
+    font-family: 'Manrope', system-ui, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+    background:
+      radial-gradient(1200px 600px at 80% -10%, color-mix(in oklab, var(--teal) 35%, white) 0%, transparent 60%),
+      radial-gradient(900px 500px at -10% 20%, color-mix(in oklab, var(--olive) 35%, white) 0%, transparent 60%),
+      linear-gradient(180deg, #ffffff 0%, var(--bg) 100%);
+  }
+
+  h1, h2, h3, h4 { @apply font-semibold text-slate-900; }
+
+  a { @apply transition-colors duration-150; }
+  a:hover { color: var(--teal); }
+
+  input, textarea, select {
+    @apply border border-slate-300 rounded-md px-3 py-2 shadow-sm;
+    outline: none;
+  }
+  input:focus, textarea:focus, select:focus { box-shadow: 0 0 0 3px color-mix(in oklab, var(--teal) 35%, transparent); border-color: var(--teal); }
+}
+
+@layer utilities {
+  /* Glass surface util */
+  .glass { background: color-mix(in oklab, white 70%, transparent); backdrop-filter: blur(10px); }
+  .glass-card { background: color-mix(in oklab, white 85%, transparent); backdrop-filter: blur(8px); box-shadow: 0 6px 24px rgba(18,46,58,0.06); border: 1px solid rgba(2,6,23,0.06); }
+
+  /* Buttons */
+  .btn { @apply inline-flex items-center justify-center font-medium rounded-lg transition focus:outline-none; }
+  .btn-primary { background: linear-gradient(90deg, var(--ink), var(--teal)); color: #fff; }
+  .btn-primary:hover { filter: brightness(1.05); }
+  .btn-secondary { background: linear-gradient(90deg, var(--olive), var(--cream)); color: #122E3A; }
+  .btn-secondary:hover { filter: brightness(1.03); }
+
+  /* Chips / badges */
+  .chip { @apply inline-flex items-center gap-2 text-xs font-medium px-3 py-1 rounded-full; background: color-mix(in oklab, var(--teal) 12%, white); color: var(--ink); border: 1px solid color-mix(in oklab, var(--teal) 25%, white); }
+
+  /* Decorative aurora blobs */
+  .aurora {
+    position: relative; isolation: isolate; overflow: hidden;
+  }
+  .aurora::before, .aurora::after {
+    content: ""; position: absolute; inset: auto; border-radius: 9999px; filter: blur(32px); opacity: .55; z-index: -1;
+  }
+  .aurora::before { width: 42rem; height: 42rem; left: -10rem; top: -12rem; background: radial-gradient(closest-side, color-mix(in oklab, var(--teal) 50%, transparent), transparent 70%); }
+  .aurora::after  { width: 36rem; height: 36rem; right: -8rem; bottom: -12rem; background: radial-gradient(closest-side, color-mix(in oklab, var(--olive) 55%, transparent), transparent 70%); }
+
+  /* Subtle grid overlay */
+  .bg-grid {
+    background-image:
+      linear-gradient(to right, rgba(2,6,23,.06) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(2,6,23,.06) 1px, transparent 1px);
+    background-size: 24px 24px;
+  }
+
+  .shadow-elevate { box-shadow: 0 10px 30px rgba(18,46,58,.12), 0 2px 6px rgba(18,46,58,.06); }
+
+  /* Simple entrance */
+  .fade-in { animation: fadeIn .5s ease-out both; }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+}
