@@ -97,7 +97,7 @@ export default function LoginPage() {
     }
   }
 
-  // ---------- Button handlers (typed as MouseEventHandler) ----------
+  // ---- Button handlers (each is a proper MouseEventHandler) ----
   const handlePasswordLogin: MouseEventHandler<HTMLButtonElement> = (e) => {
     e.preventDefault();
     void loginWithPassword();
@@ -122,7 +122,7 @@ export default function LoginPage() {
     e.preventDefault();
     void login();
   };
-  // -----------------------------------------------------------------
+  // --------------------------------------------------------------
 
   return (
     <div className="min-h-[calc(100vh-200px)] text-slate-800">
