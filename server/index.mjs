@@ -178,10 +178,7 @@ app.post(
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return res.status(400).json({ error: 'invalid_email' });
     let user = await getUserByEmail(email);
     if (!user) user = await createUser(email);
-
-    if (user.totp_enabled && !force) {
-      return res.json({ mode: 'code' });
-    }
+    if (user.totp_enabled && !force) return res.json({ mode: 'code' });
 
     if (force) {
       await query(
@@ -414,6 +411,15 @@ app.put(
     );
     res.json({ ok: true });
   })
+);
+
+if (process.env.VERCEL !== '1') {
+  app.listen(PORT, () => {
+    console.log(`[server] listening on http://localhost:${PORT}`);
+  });
+}
+
+export default app;
 );
 
 app.post(
