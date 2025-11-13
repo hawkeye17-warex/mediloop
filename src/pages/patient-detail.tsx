@@ -273,10 +273,12 @@ export default function PatientDetail() {
     }
   }
 
+  const issueOptions = useMemo(() => Object.keys(ISSUE_MEDICATIONS), []);
+
   if (authLoading || detailLoading) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center text-slate-500">
-        Fetching patient record…
+        Fetching patient record...
       </div>
     );
   }
@@ -291,8 +293,6 @@ export default function PatientDetail() {
       </div>
     );
   }
-
-  const issueOptions = useMemo(() => Object.keys(ISSUE_MEDICATIONS), []);
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800">
