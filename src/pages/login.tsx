@@ -1,5 +1,6 @@
 // File: pages/login.tsx
 import { useState } from 'react';
+import type { MouseEvent } from 'react';
 import { apiFetch, getJson } from '../lib/api';
 
 type StartRes = { mode: 'code' } | { mode: 'enroll'; otpauthUrl: string; qrDataUrl: string; devSecret?: string };
@@ -72,10 +73,22 @@ export default function LoginPage() {
     try { return await res.json(); } catch { return null; }
   }
 
-  const handlePasswordLogin = () => { void loginWithPassword(); };
-  const handleStart = (force = false) => () => { void start(force); };
-  const handleVerify = () => { void verifyEnroll(); };
-  const handleCodeLogin = () => { void login(); };
+  const handlePasswordLogin = (event: MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    void loginWithPassword();
+  };
+  const handleStart = (force = false) => (event: MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    void start(force);
+  };
+  const handleVerify = (event: MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    void verifyEnroll();
+  };
+  const handleCodeLogin = (event: MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    void login();
+  };
 
   return (
     <div className="min-h-[calc(100vh-200px)] text-slate-800">
