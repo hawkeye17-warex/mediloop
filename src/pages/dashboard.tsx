@@ -1,4 +1,4 @@
-ï»¿import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { apiFetch, getJson } from '../lib/api';
@@ -159,7 +159,7 @@ export default function DashboardPage() {
     let ignore = false;
     (async () => {
       try {
-        const res = await apiFetch('/api/auth/me');
+        const res = await apiFetch('/auth/me');
         const data = await getJson<Me>(res);
         if (!ignore) setMe(data.user?.email ?? null);
       } catch (err) {
@@ -178,7 +178,7 @@ export default function DashboardPage() {
   const loadPatients = useCallback(async () => {
     setPatientsLoading(true);
     try {
-      const res = await apiFetch('/api/patients');
+      const res = await apiFetch('/patients');
       if (res.status === 401) return handleSessionExpired();
       if (!res.ok) throw new Error('Failed to load patients');
       const data = await getJson<PatientsRes>(res);
@@ -194,7 +194,7 @@ export default function DashboardPage() {
   const loadAppointments = useCallback(async () => {
     setAppointmentsLoading(true);
     try {
-      const res = await apiFetch('/api/appointments/upcoming');
+      const res = await apiFetch('/appointments/upcoming');
       if (res.status === 401) return handleSessionExpired();
       if (!res.ok) throw new Error('Failed to load appointments');
       const data = await getJson<AppointmentsRes>(res);
@@ -210,7 +210,7 @@ export default function DashboardPage() {
   const loadLabOrders = useCallback(async () => {
     setLabOrdersLoading(true);
     try {
-      const res = await apiFetch('/api/lab-orders');
+      const res = await apiFetch('/lab-orders');
       if (res.status === 401) return handleSessionExpired();
       if (!res.ok) throw new Error('Failed to load lab orders');
       const data = await getJson<LabOrdersRes>(res);
@@ -226,7 +226,7 @@ export default function DashboardPage() {
   const loadReferrals = useCallback(async () => {
     setReferralsLoading(true);
     try {
-      const res = await apiFetch('/api/referrals');
+      const res = await apiFetch('/referrals');
       if (res.status === 401) return handleSessionExpired();
       if (!res.ok) throw new Error('Failed to load referrals');
       const data = await getJson<ReferralsRes>(res);
@@ -391,7 +391,7 @@ export default function DashboardPage() {
     const todayVisits = appointments.filter((a) => new Date(a.startTs * 1000).toDateString() === today).length;
     return [
       { label: 'Total Patients', value: uniquePatients.toString(), accent: '#1AA898' },
-      { label: 'Todayâ€™s Visits', value: todayVisits.toString(), accent: '#122E3A' },
+      { label: 'Today’s Visits', value: todayVisits.toString(), accent: '#122E3A' },
       { label: 'Next 7 Days', value: upcomingWeek.toString(), accent: '#BCC46A' },
       { label: 'Active Referrals', value: referralsActive.toString(), accent: '#FB923C' },
     ];
@@ -406,7 +406,7 @@ export default function DashboardPage() {
     }
     setPatientSaving(true);
     try {
-      const res = await apiFetch('/api/patients', { method: 'POST', json: patientForm });
+      const res = await apiFetch('/patients', { method: 'POST', json: patientForm });
       if (res.status === 401) return handleSessionExpired();
       const info = await res.json();
       if (!res.ok) throw new Error(info?.error || 'Unable to add patient');
@@ -453,7 +453,7 @@ export default function DashboardPage() {
         }
       : undefined;
     try {
-      const res = await apiFetch('/api/appointments', {
+      const res = await apiFetch('/appointments', {
         method: 'POST',
         json: {
           patientId,
@@ -489,7 +489,7 @@ export default function DashboardPage() {
       return;
     }
     try {
-      const res = await apiFetch('/api/referrals', {
+      const res = await apiFetch('/referrals', {
         method: 'POST',
         json: {
           patientId,
@@ -543,7 +543,7 @@ export default function DashboardPage() {
   }
 
   if (authLoading || !me) {
-    return <div className="min-h-screen flex items-center justify-center text-slate-500">Loading dashboardâ€¦</div>;
+    return <div className="min-h-screen flex items-center justify-center text-slate-500">Loading dashboard…</div>;
   }
 
   const issueMedOptions = apptForm.issueKey ? ISSUE_MEDICATIONS[apptForm.issueKey] ?? [] : [];
@@ -560,7 +560,7 @@ export default function DashboardPage() {
                 + Patient
               </button>
               <button className="w-9 h-9 rounded-full border border-slate-200 bg-white hover:bg-slate-50" title="Notifications" aria-label="Notifications">
-                ðŸ””
+                ??
               </button>
               <div className="w-9 h-9 rounded-full bg-gradient-to-br from-[#122E3A] to-[#1AA898] text-white flex items-center justify-center text-sm font-semibold">{(me || 'M')[0].toUpperCase()}</div>
             </div>
@@ -573,7 +573,7 @@ export default function DashboardPage() {
               </button>
             ))}
             <div className="ml-auto">
-              <button className="text-sm text-slate-600 hover:text-slate-900" onClick={() => { apiFetch('/api/auth/logout', { method: 'POST' }).then(() => navigate('/')); }}>
+              <button className="text-sm text-slate-600 hover:text-slate-900" onClick={() => { apiFetch('/auth/logout', { method: 'POST' }).then(() => navigate('/')); }}>
                 Logout
               </button>
             </div>
@@ -629,7 +629,7 @@ export default function DashboardPage() {
                   <button className="text-sm text-[#1AA898]" onClick={() => setTab('Schedule')}>Full schedule</button>
                 </div>
                 {appointmentsLoading ? (
-                  <p className="text-sm text-slate-500">Loading appointmentsâ€¦</p>
+                  <p className="text-sm text-slate-500">Loading appointments…</p>
                 ) : groupedAppointments.length === 0 ? (
                   <p className="text-sm text-slate-500">No upcoming appointments scheduled.</p>
                 ) : (
@@ -700,7 +700,7 @@ export default function DashboardPage() {
                             ))}
                           </select>
                         </label>
-                        {labLoading && <p className="text-xs text-slate-500">Finding nearby labsâ€¦</p>}
+                        {labLoading && <p className="text-xs text-slate-500">Finding nearby labs…</p>}
                         {labError && <p className="text-xs text-amber-600">{labError}</p>}
                         {!labLoading && labResults.length > 0 && (
                           <div className="space-y-2 max-h-40 overflow-auto">
@@ -709,7 +709,7 @@ export default function DashboardPage() {
                                 <input type="radio" name="lab-choice" checked={selectedLab?.name === lab.name} onChange={() => setSelectedLab(lab)} />
                                 <span>
                                   <span className="font-semibold text-slate-700">{lab.name}</span>
-                                  <span className="block text-slate-500">{lab.city} Â· {lab.tests.join(', ')}</span>
+                                  <span className="block text-slate-500">{lab.city} · {lab.tests.join(', ')}</span>
                                 </span>
                               </label>
                             ))}
@@ -764,7 +764,7 @@ export default function DashboardPage() {
               <header className="px-4 py-3 border-b border-slate-200 flex items-center justify-between">
                 <div>
                   <h2 className="font-semibold">Patients ({patients.length})</h2>
-                  {patientsLoading && <p className="text-xs text-slate-500">Refreshingâ€¦</p>}
+                  {patientsLoading && <p className="text-xs text-slate-500">Refreshing…</p>}
                 </div>
                 <button className="text-sm text-[#1AA898]" onClick={loadPatients}>Refresh</button>
               </header>
@@ -841,7 +841,7 @@ export default function DashboardPage() {
                       <p className="text-sm text-slate-500">{appt.reason || 'Consult'}</p>
                     </div>
                     <div className="text-sm text-right">
-                      <p className="font-medium">{formatDate(appt.startTs)} Â· {formatTime(appt.startTs)}</p>
+                      <p className="font-medium">{formatDate(appt.startTs)} · {formatTime(appt.startTs)}</p>
                       <Link className="text-xs text-[#1AA898]" to={`/dashboard/patients/${appt.patientId}`}>Open chart</Link>
                     </div>
                   </div>
@@ -864,7 +864,7 @@ export default function DashboardPage() {
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg p-6 space-y-4">
             <div className="flex items-center justify-between">
               <h2 className="text-lg font-semibold">New patient</h2>
-              <button className="text-slate-500 hover:text-slate-900" onClick={() => setShowAddPatientModal(false)}>Ã—</button>
+              <button className="text-slate-500 hover:text-slate-900" onClick={() => setShowAddPatientModal(false)}>×</button>
             </div>
             <AddPatientForm
               form={patientForm}
@@ -940,14 +940,14 @@ function AddPatientForm({ form, onChange, onSubmit, feedback, saving, submitLabe
         <p className={`text-xs ${feedback.kind === 'error' ? 'text-red-600' : 'text-emerald-600'}`}>{feedback.message}</p>
       )}
       <button type="submit" className="w-full btn btn-primary py-2" disabled={saving}>
-        {saving ? 'Savingâ€¦' : submitLabel}
+        {saving ? 'Saving…' : submitLabel}
       </button>
     </form>
   );
 }
 
 function PatientTable({ patients, loading }: { patients: Patient[]; loading: boolean }) {
-  if (loading) return <p className="text-sm text-slate-500 px-4 py-6">Loading patientsâ€¦</p>;
+  if (loading) return <p className="text-sm text-slate-500 px-4 py-6">Loading patients…</p>;
   if (patients.length === 0) return <p className="text-sm text-slate-500 px-4 py-6">No patients yet. Add one to get started.</p>;
   return (
     <div className="overflow-x-auto">
@@ -966,7 +966,7 @@ function PatientTable({ patients, loading }: { patients: Patient[]; loading: boo
                 <Link to={`/dashboard/patients/${p.id}`} className="hover:underline">{p.name}</Link>
               </td>
               <td className="px-4 py-3 text-slate-600">
-                <div>{p.phone || 'â€”'}</div>
+                <div>{p.phone || '—'}</div>
                 <div className="text-xs text-slate-500">{p.email || 'No email'}</div>
               </td>
               <td className="px-4 py-3 text-slate-600">{formatRelative(p.createdAt)}</td>
@@ -984,7 +984,7 @@ function LabOrdersSnapshot({ labOrders, loading, patientMap, onUpdateStatus }: {
   patientMap: Map<string, Patient>;
   onUpdateStatus: (id: number, status: string) => Promise<void> | void;
 }) {
-  if (loading) return <p className="text-sm text-slate-500">Checking lab queueâ€¦</p>;
+  if (loading) return <p className="text-sm text-slate-500">Checking lab queue…</p>;
   if (labOrders.length === 0) return <p className="text-sm text-slate-500">No lab orders yet.</p>;
   return (
     <div className="space-y-3">
@@ -993,7 +993,7 @@ function LabOrdersSnapshot({ labOrders, loading, patientMap, onUpdateStatus }: {
           <div className="flex items-center justify-between">
             <div>
               <p className="font-semibold text-[#122E3A]">{patientMap.get(order.patientId)?.name || 'Patient'}</p>
-              <p className="text-xs text-slate-500">{order.test} Â· {order.labName || 'TBD'}</p>
+              <p className="text-xs text-slate-500">{order.test} · {order.labName || 'TBD'}</p>
             </div>
             <StatusBadge status={order.status} />
           </div>
@@ -1028,7 +1028,7 @@ function formatDate(ts: number) {
 }
 
 function ReferralSnapshot({ referrals, loading }: { referrals: Referral[]; loading: boolean }) {
-  if (loading) return <p className="text-sm text-slate-500">Loading referralsâ€¦</p>;
+  if (loading) return <p className="text-sm text-slate-500">Loading referrals…</p>;
   if (referrals.length === 0) return <p className="text-sm text-slate-500">No referrals yet.</p>;
   return (
     <ul className="space-y-2 text-sm">
@@ -1088,7 +1088,7 @@ function ReferralComposer({
           }}
         />
       </label>
-      {specialistLoading && <p className="text-xs text-slate-500">Searchingâ€¦</p>}
+      {specialistLoading && <p className="text-xs text-slate-500">Searching…</p>}
       {!specialistLoading && specialists.length > 0 && (
         <ul className="border border-slate-200 rounded-lg divide-y max-h-40 overflow-auto text-sm">
           {specialists.map((spec) => (
@@ -1099,7 +1099,7 @@ function ReferralComposer({
                 onClick={() => onSelectSpecialist(spec)}
               >
                 <p className="font-medium text-[#122E3A]">{spec.name}</p>
-                <p className="text-xs text-slate-500">{spec.specialty} Â· {spec.city}</p>
+                <p className="text-xs text-slate-500">{spec.specialty} · {spec.city}</p>
               </button>
             </li>
           ))}
@@ -1140,7 +1140,7 @@ type ReferralTableProps = {
 };
 
 function ReferralTable({ referrals, loading, onUpdateStatus }: ReferralTableProps) {
-  if (loading) return <p className="text-sm text-slate-500">Loading referralsâ€¦</p>;
+  if (loading) return <p className="text-sm text-slate-500">Loading referrals…</p>;
   if (referrals.length === 0) return <p className="text-sm text-slate-500">No referrals yet.</p>;
   return (
     <div className="overflow-x-auto">
@@ -1162,7 +1162,7 @@ function ReferralTable({ referrals, loading, onUpdateStatus }: ReferralTableProp
               </td>
               <td className="px-3 py-2 text-slate-600">
                 <div>{ref.specialistName}</div>
-                <div className="text-xs text-slate-500">{ref.specialistOrg || 'â€”'}</div>
+                <div className="text-xs text-slate-500">{ref.specialistOrg || '—'}</div>
               </td>
               <td className="px-3 py-2">
                 <select
@@ -1195,4 +1195,5 @@ function formatRelative(tsSeconds: number) {
   if (months === 1) return '1 month ago';
   return `${months} months ago`;
 }
+
 

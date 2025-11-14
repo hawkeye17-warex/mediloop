@@ -28,7 +28,7 @@ export default function RegisterPage() {
 
     setLoading(true);
     try {
-      const res = await apiFetch('/api/auth/register', {
+      const res = await apiFetch('/auth/register', {
         method: 'POST',
         json: { email: email.trim().toLowerCase(), password },
       });
@@ -38,7 +38,7 @@ export default function RegisterPage() {
         return;
       }
 
-      const loginRes = await apiFetch('/api/auth/login-password', {
+      const loginRes = await apiFetch('/auth/login-password', {
         method: 'POST',
         json: { email: email.trim().toLowerCase(), password },
       });
@@ -120,4 +120,3 @@ export default function RegisterPage() {
     </div>
   );
 }
-

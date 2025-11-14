@@ -23,7 +23,7 @@ export default function LoginPage() {
 
     setLoading(true);
     try {
-      const res = await apiFetch('/api/auth/login-password', {
+      const res = await apiFetch('/auth/login-password', {
         method: 'POST',
         json: { email: email.trim().toLowerCase(), password },
       });
@@ -96,4 +96,3 @@ export default function LoginPage() {
     </div>
   );
 }
-
