@@ -13,15 +13,15 @@ const SPECIALTY_OPTIONS = [
   },
   {
     id: 'ophthalmology',
-    label: 'Ophthalmology (coming soon)',
+    label: 'Ophthalmology',
     description: 'Refraction, OCT, slit-lamp, IOP tracking.',
-    available: false,
+    available: true,
   },
   {
     id: 'dermatology',
-    label: 'Dermatology (coming soon)',
+    label: 'Dermatology',
     description: 'Lesion mapping, biopsy tracking, telederm captures.',
-    available: false,
+    available: true,
   },
 ];
 
@@ -71,7 +71,7 @@ export default function RegisterPage() {
       setInfo('Account created. Redirecting…');
       window.location.href = '/dashboard';
     } catch {
-      setError('Auth server unreachable. Start it with: npm run server or npm run dev:full');
+      setError('Auth server unreachable.');
     } finally {
       setLoading(false);
     }
@@ -99,7 +99,7 @@ export default function RegisterPage() {
               <input
                 type="email"
                 className="mt-1 w-full"
-                placeholder="you@clinic.com"
+                placeholder="Enter your email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
               />
@@ -109,7 +109,7 @@ export default function RegisterPage() {
               <input
                 type="password"
                 className="mt-1 w-full"
-                placeholder="••••••••"
+                placeholder="Create a password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
               />

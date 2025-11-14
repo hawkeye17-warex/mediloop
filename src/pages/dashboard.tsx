@@ -3,7 +3,7 @@ import type { FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { apiFetch, getJson } from '../lib/api';
 
-type UserProfile = { email: string; specialty?: string };
+type UserProfile = { email: string; specialty?: string; role?: string };
 type Me = { user: UserProfile | null };
 
 type Patient = {
@@ -220,7 +220,9 @@ export default function DashboardPage() {
   const [specialistLoading, setSpecialistLoading] = useState(false);
 
   const userSpecialty = me?.specialty || 'general_physician';
+  const userRole = me?.role || 'doctor';
   const userInitial = (me?.email?.charAt(0) || 'M').toUpperCase();
+  const isReceptionist = userRole === 'receptionist';
 
   const handleSessionExpired = useCallback(() => {
     setMe(null);
@@ -813,19 +815,27 @@ export default function DashboardPage() {
         {tab === 'Overview' && (
           <>
             <SpecialtyHero module={activeModule} modules={modules} loading={modulesLoading} />
-            {activeModule && !activeModule.comingSoon && (
-              <GeneralPhysicianComposer
-                patients={patients}
-                form={encounterForm}
-                vitals={vitalsDefinition}
-                labs={availableLabs}
-                meds={availableMeds}
-                message={encounterMessage}
-                onField={handleEncounterField}
-                onVital={handleVitalChange}
-                onToggle={toggleEncounterList}
-                onSubmit={handleEncounterSubmit}
-              />
+            {isReceptionist ? (
+              <section className="bg-white rounded-2xl border border-dashed border-slate-300 p-6 text-sm text-slate-600">
+                You are signed in as a receptionist. Manage the queue in the{' '}
+                <a href="/reception" className="text-[#1AA898] underline">reception console</a>.
+              </section>
+            ) : (
+              activeModule &&
+              !activeModule.comingSoon && (
+                <GeneralPhysicianComposer
+                  patients={patients}
+                  form={encounterForm}
+                  vitals={vitalsDefinition}
+                  labs={availableLabs}
+                  meds={availableMeds}
+                  message={encounterMessage}
+                  onField={handleEncounterField}
+                  onVital={handleVitalChange}
+                  onToggle={toggleEncounterList}
+                  onSubmit={handleEncounterSubmit}
+                />
+              )
             )}
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
               {metrics.map((metric) => (

@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { apiFetch, getJson } from '../lib/api';
 
-type LoginError = { error?: string };
+type LoginError = { error?: string; role?: string };
 
 export default function LoginPage() {
   const [email, setEmail] = useState('');
@@ -27,13 +27,15 @@ export default function LoginPage() {
         method: 'POST',
         json: { email: email.trim().toLowerCase(), password },
       });
+      const body = await safeJson(res);
       if (!res.ok) {
-        const body = await safeJson(res);
         setError(body?.error || 'Invalid credentials.');
         return;
       }
+      const target =
+        body?.role === 'receptionist' ? '/reception' : body?.role === 'admin' ? '/admin' : '/dashboard';
       setInfo('Welcome back! Redirecting…');
-      window.location.href = '/dashboard';
+      window.location.href = target;
     } catch {
       setError('Auth server unreachable. Start it with: npm run server or npm run dev:full');
     } finally {

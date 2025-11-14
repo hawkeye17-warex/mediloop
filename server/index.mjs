@@ -55,6 +55,70 @@ ensureSpecialtySchema().catch((err) => {
   console.error('Failed to ensure specialty schema', err);
 });
 
+async function ensureCoreSchema() {
+  await query(`create table if not exists clinics (
+    id uuid primary key default gen_random_uuid(),
+    name text not null,
+    slug text,
+    address text,
+    owner_id uuid,
+    timezone text,
+    contact_email text,
+    created_at bigint not null
+  )`);
+  await query('alter table users add column if not exists role text');
+  await query('alter table users add column if not exists clinic_id uuid references clinics(id)');
+  await query('update users set role = coalesce(role, $1)', [DEFAULT_ROLE]);
+  await query(`create table if not exists audit_logs (
+    id uuid primary key default gen_random_uuid(),
+    user_id uuid,
+    method text,
+    path text,
+    ip text,
+    user_agent text,
+    status integer,
+    created_at bigint not null
+  )`);
+}
+
+ensureCoreSchema().catch((err) => {
+  console.error('Failed to ensure core schema', err);
+});
+
+
+async function ensureCoreSchema() {
+  await query(`create table if not exists clinics (
+    id uuid primary key default gen_random_uuid(),
+    name text not null,
+    slug text,
+    address text,
+    owner_id uuid,
+    timezone text,
+    contact_email text,
+    created_at bigint not null
+  )`);
+  await query('alter table users add column if not exists role text');
+  await query('alter table users add column if not exists clinic_id uuid references clinics(id)');
+  await query('update users set role = coalesce(role, $1)', [DEFAULT_ROLE]);
+  await query(`create table if not exists audit_logs (
+    id uuid primary key default gen_random_uuid(),
+    user_id uuid,
+    method text,
+    path text,
+    ip text,
+    user_agent text,
+    created_at bigint not null
+  )`);
+  await query('alter table appointments add column if not exists clinic_id uuid');
+  await query(`alter table appointments add column if not exists status text default 'scheduled'`);
+  await query('alter table appointments add column if not exists triage_notes text');
+  await query('alter table patients add column if not exists clinic_id uuid');
+}
+
+ensureCoreSchema().catch((err) => {
+  console.error('Failed to ensure core schema', err);
+});
+
 // ---------- Crypto helpers ----------
 const RAW_SECRET = process.env.AUTH_SECRET || 'dev-secret-change-me';
 const KEY = crypto.scryptSync(RAW_SECRET, 'mediloop-salt', 32);
@@ -79,6 +143,12 @@ const decrypt = (payload) => {
 const hash = (t) => crypto.createHash('sha256').update(t).digest('hex');
 
 authenticator.options = { step: 30, window: 1, digits: 6 };
+
+const DEFAULT_ROLE = 'doctor';
+const ROLES = ['admin','doctor','receptionist'];
+
+const DEFAULT_ROLE = 'doctor';
+const ROLES = ['admin', 'doctor', 'receptionist'];
 
 const LABS = [
   { name: 'Prairie Labs - Downtown', city: 'Winnipeg', tests: ['Bloodwork', 'MRI', 'X-Ray'] },
@@ -304,7 +374,19 @@ const withAuth = (handler) =>
       await query('select * from sessions where token_hash = $1', [hash(token)])
     )[0];
     if (!session || session.expires_at < nowS()) return res.status(401).json({ error: 'unauthorized' });
-    req.userId = session.user_id;
+    const user = await getUserById(session.user_id);
+    if (!user) return res.status(401).json({ error: 'unauthorized' });
+    req.userId = user.id;
+    req.userRole = user.role || DEFAULT_ROLE;
+    req.userSpecialty = user.specialty || DEFAULT_SPECIALTY;
+    req.userClinicId = user.clinic_id || null;
+    return handler(req, res);
+  });
+
+const withRole = (roles, handler) =>
+  withAuth(async (req, res) => {
+    const role = req.userRole || DEFAULT_ROLE;
+    if (!roles.includes(role)) return res.status(403).json({ error: 'forbidden' });
     return handler(req, res);
   });
 
@@ -325,6 +407,26 @@ app.use((req, res, next) => {
   next();
 });
 
+app.use((req, res, next) => {
+  const start = Date.now();
+  res.on('finish', () => {
+    const duration = Date.now() - start;
+    query(
+      'insert into audit_logs (user_id, method, path, ip, user_agent, status, created_at) values ($1,$2,$3,$4,$5,$6,$7)',
+      [
+        req.userId || null,
+        req.method,
+        req.originalUrl || req.url,
+        req.headers['x-forwarded-for'] || req.ip || '',
+        req.headers['user-agent'] || '',
+        res.statusCode,
+        nowS(),
+      ]
+    ).catch((err) => console.warn('audit log failed', err));
+  });
+  next();
+});
+
 // ---------- Auth helpers ----------
 async function getUserByEmail(email) {
   return (await query('select * from users where email=$1', [email]))[0];
@@ -332,9 +434,9 @@ async function getUserByEmail(email) {
 async function getUserById(id) {
   return (await query('select * from users where id=$1', [id]))[0];
 }
-async function createUser(email, specialty = DEFAULT_SPECIALTY) {
+async function createUser(email, specialty = DEFAULT_SPECIALTY, role = DEFAULT_ROLE, clinicId = null) {
   return (
-    await query('insert into users (email, specialty, created_at) values ($1,$2,$3) returning *', [email, specialty, nowS()])
+    await query('insert into users (email, specialty, role, clinic_id, created_at) values ($1,$2,$3,$4,$5) returning *', [email, specialty, role, clinicId, nowS()])
   )[0];
 }
 function issueSession(res, userId) {
@@ -374,14 +476,14 @@ app.post(
       return res.status(400).json({ error: 'invalid_input' });
     }
     let user = await getUserByEmail(email);
-    if (!user) user = await createUser(email, specialty);
+    if (!user) user = await createUser(email, specialty, DEFAULT_ROLE);
     else if (user.specialty !== specialty) {
       await query('update users set specialty=$1 where id=$2', [specialty, user.id]);
       user.specialty = specialty;
     }
     const ph = await argon2.hash(password);
     await query('update users set password_hash=$1 where id=$2', [ph, user.id]);
-    res.json({ ok: true });
+    res.json({ ok: true, role: user.role || DEFAULT_ROLE });
   })
 );
 
@@ -395,7 +497,7 @@ app.post(
     const ok = await argon2.verify(user.password_hash, password);
     if (!ok) return res.status(400).json({ error: 'invalid_credentials' });
     issueSession(res, user.id);
-    res.json({ ok: true });
+    res.json({ ok: true, role: user.role || DEFAULT_ROLE });
   })
 );
 
@@ -462,7 +564,7 @@ app.post(
       [encrypt(secret), user.id]
     );
     issueSession(res, user.id);
-    res.json({ ok: true });
+    res.json({ ok: true, role: user.role || DEFAULT_ROLE });
   })
 );
 
@@ -482,7 +584,7 @@ app.post(
     const ok = authenticator.verify({ token: code, secret, window: 2 });
     if (!ok) return res.status(400).json({ error: 'invalid_code' });
     issueSession(res, user.id);
-    res.json({ ok: true });
+    res.json({ ok: true, role: user.role || DEFAULT_ROLE });
   })
 );
 
@@ -496,7 +598,16 @@ app.get(
     )[0];
     if (!session || session.expires_at < nowS()) return res.json({ user: null });
     const user = await getUserById(session.user_id);
-    res.json({ user: { id: user.id, email: user.email, specialty: user.specialty || DEFAULT_SPECIALTY } });
+    if (!user) return res.json({ user: null });
+    res.json({
+      user: {
+        id: user.id,
+        email: user.email,
+        specialty: user.specialty || DEFAULT_SPECIALTY,
+        role: user.role || DEFAULT_ROLE,
+        clinicId: user.clinic_id || null,
+      },
+    });
   })
 );
 
@@ -538,6 +649,56 @@ if (DEBUG) {
     })
   );
 }
+
+// ---------- Admin ----------
+app.get(
+  '/api/admin/users',
+  withRole(['admin'], async (req, res) => {
+    const rows = await query(
+      'select id, email, role, specialty, clinic_id, created_at from users order by created_at desc limit 200'
+    );
+    res.json({ users: rows });
+  })
+);
+
+app.post(
+  '/api/admin/users/invite',
+  withRole(['admin'], async (req, res) => {
+    const email = String(req.body?.email || '').trim().toLowerCase();
+    const role = ROLES.includes(req.body?.role) ? req.body.role : DEFAULT_ROLE;
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return res.status(400).json({ error: 'invalid_email' });
+    let user = await getUserByEmail(email);
+    if (user) {
+      await query('update users set role=$1 where id=$2', [role, user.id]);
+      return res.json({ ok: true, existing: true });
+    }
+    user = await createUser(email, DEFAULT_SPECIALTY, role);
+    res.json({ ok: true, userId: user.id });
+  })
+);
+
+app.patch(
+  '/api/admin/users/:id',
+  withRole(['admin'], async (req, res) => {
+    const role = ROLES.includes(req.body?.role) ? req.body.role : null;
+    if (!role) return res.status(400).json({ error: 'invalid_role' });
+    await query('update users set role=$1 where id=$2', [role, req.params.id]);
+    res.json({ ok: true });
+  })
+);
+
+app.get(
+  '/api/admin/audit',
+  withRole(['admin'], async (req, res) => {
+    const rows = await query(
+      `select a.id, a.user_id, u.email, a.method, a.path, a.ip, a.user_agent, a.status, a.created_at
+       from audit_logs a left join users u on a.user_id = u.id
+       order by a.created_at desc
+       limit 200`
+    );
+    res.json({ logs: rows });
+  })
+);
 
 // ---------- Specialty modules ----------
 app.get(
@@ -755,6 +916,35 @@ app.post(
     await query(
       'insert into encounters (patient_id, user_id, specialty, template_id, title, data, created_at) values ($1,$2,$3,$4,$5,$6,$7)',
       [patient.id, req.userId, specialty, templateId || `${specialty}.core`, encounterTitle, JSON.stringify(data), nowS()]
+    );
+    res.json({ ok: true });
+  })
+);
+
+app.get(
+  '/api/appointments/upcoming',
+  withAuth(async (req, res) => {
+    const rows = await query(
+      `select a.id, a.patient_id, a.start_ts, a.reason, a.status, p.name as patient_name
+       from appointments a
+       left join patients p on p.id = a.patient_id
+       where a.user_id=$1
+       order by a.start_ts asc
+       limit 200`,
+      [req.userId]
+    );
+    res.json({ appointments: rows });
+  })
+);
+
+app.patch(
+  '/api/appointments/:id',
+  withRole(['admin', 'doctor', 'receptionist'], async (req, res) => {
+    const { status, reason, startTs } = req.body || {};
+    if (!status && !reason && !startTs) return res.status(400).json({ error: 'no_changes' });
+    await query(
+      'update appointments set status=coalesce($1,status), reason=coalesce($2,reason), start_ts=coalesce($3,start_ts) where id=$4 and user_id=$5',
+      [status || null, reason || null, startTs ? Number(startTs) : null, req.params.id, req.userId]
     );
     res.json({ ok: true });
   })

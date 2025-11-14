@@ -8,6 +8,8 @@ import Product from './pages/product';
 import Clinics from './pages/clinics';
 import Login from './pages/login';
 import Register from './pages/register';
+import AdminConsolePage from './pages/admin';
+import ReceptionHub from './pages/reception';
 import RequestAccess from './pages/request-access';
 import Dashboard from './pages/dashboard';
 import PatientDetail from './pages/patient-detail';
@@ -27,6 +29,8 @@ function Shell() {
         <Route path="/login" element={<Login />} />
         <Route path="/register" element={<Register />} />
         <Route path="/request-access" element={<RequestAccess />} />
+        <Route path="/admin" element={<AdminConsolePage />} />
+        <Route path="/reception" element={<ReceptionHub />} />
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/dashboard/patients/:id" element={<PatientDetail />} />
       </Routes>

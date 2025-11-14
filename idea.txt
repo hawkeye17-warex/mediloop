@@ -1,0 +1,410 @@
+ 🧩  1) Core User Roles 
+
+Each role must have different permissions.
+
+    1.1 Admin (Clinic Owner) 
+
+  Add/remove doctors
+  Add/remove receptionist
+  Assign access permissions
+  Set clinic timings
+  Set departments / specialties
+  Approve or deny referral partnerships
+  View clinic-wide analytics
+  Manage billing & fees
+  Set up pharmacy module
+  Manage lab partnerships
+
+     1.2 Doctor 
+
+  View today’s appointments
+  View waiting queue
+  Open patient medical file
+  Add consultation notes
+  Add diagnosis, vitals, medications
+  Order lab tests
+  View previous visit history (timeline)
+  Refer patient to another doctor
+  Accept/reject incoming referrals
+  See referred-patient updates
+  Generate digital & printed prescription
+  See list of all upcoming appointments
+  Edit existing prescriptions
+  Write follow-up instructions
+
+     1.3 Receptionist 
+
+  Add new patient
+  Edit basic patient info
+  Create visit/appointment
+  Manage waiting queue
+  Move patient to doctor room
+  View clinic calendar
+  Collect payment & mark as paid
+  Add appointment notes
+  Reschedule patient
+  Cancel appointment
+  Print receipts
+  Basic patient triage (optional)
+
+     1.4 Patient App / Portal 
+
+  Book appointments
+  See doctor availability
+  View prescriptions
+  View lab results
+  Download reports
+  Store medical history
+  View consultation summaries
+  Manage follow-ups
+  Chat (optional later)
+
+ 
+
+  🏥  2) Clinic Setup 
+
+Every clinic profile should have:
+
+  Clinic name, address, logo
+  Departments (ENT, dental, cardio, general)
+  Operating hours
+  Doctor schedules
+  Appointment slot duration
+  Payment settings
+  Lab partners connected
+  Pharmacy integration enabled/disabled
+  Digital receipts settings
+  Online booking URL (auto-generated)
+
+ 
+
+  📅  3) Appointment Booking System 
+
+     3.1 For Patients (via patient portal) 
+
+  Choose clinic
+  Choose doctor
+  Choose date/time
+  OTP or email verification
+  Auto add to doctor’s schedule
+  Confirmation SMS/email
+  Auto-block slot in doctor’s OTHER calendars (if external website used)
+
+     3.2 For Receptionist 
+
+  Create appointment
+  Edit appointment
+  Cancel appointment
+  Move appointment
+  Mark appointment as “arrived”
+  Add reason for visit
+  See daily appointment list
+  See full calendar view
+  Add walk-in patient
+  View missed appointments
+
+     3.3 Calendar Sync Logic 
+
+  Doctor website → sync to Mediloop
+  Mediloop → sync to doctor website
+  Avoid double-booking
+  Show real-time availability
+
+ 
+
+  👥  4) Patient Profile Structure 
+
+Every patient should have a  full medical profile :
+
+     4.1 Basic Info 
+
+  Name
+  DOB
+  Gender
+  Phone
+  Email
+  Address
+  Blood group
+  Emergency contact
+  Patient ID (auto-generated)
+
+     4.2 Medical Info 
+
+  Allergies
+  Chronic conditions (diabetes, BP, thyroid)
+  Surgical history
+  Medications history
+  Family history
+  Social history
+  Immunization record
+  Insurance details (optional)
+
+ 
+
+  📂  5) Electronic Medical Record (EMR) 
+
+This is the MOST IMPORTANT module.
+
+     5.1 Visit Notes 
+
+  Chief complaint
+  History of present illness
+  Physical exam
+  Diagnosis list
+  Treatment plan
+  Follow-up advice
+  Doctor signature
+  Template support (SOAP, pediatric, ophthalmology)
+
+     5.2 Vitals 
+
+  Temperature
+  BP
+  Pulse
+  Weight
+  Height
+  BMI calculation
+  Sugar level (fasting/random)
+  Oxygen saturation
+
+     5.3 Medical Attachments 
+
+  Lab reports
+  Imaging (X-ray, MRI, CT)
+  PDF uploads
+  Photos (skin issues etc.)
+
+     5.4 Medications 
+
+  Drug name
+  Dosage
+  Frequency
+  Duration
+  Notes
+  Auto-suggestion based on diagnosis
+  Drug interactions check (optional)
+
+     5.5 Prescriptions 
+
+  Printable template
+  Digital share (PDF + link)
+  Multi-language support
+  Clinic branding
+  QR code for verification
+
+     5.6 Timeline View 
+
+A vertical timeline showing:
+
+  Past consultations
+  Medications
+  Lab results
+  Referrals
+  Diagnosis changes
+
+ 
+
+  🔁  6) Referral System 
+
+This is the  USP  of Mediloop.
+
+     6.1 Outgoing Referral (Doctor → Doctor) 
+
+  Choose specialist
+  Add reason for referral
+  Send patient file preview
+  Attach notes
+  Attach past records
+  Select urgency: routine / urgent
+  Referred doctor gets a notification
+
+     6.2 Incoming Referral 
+
+  Accept or reject referral
+  Accept → full patient access granted
+  Reject → sender notified
+  Track referral status
+
+     6.3 Shared Record Access 
+
+  Referred doctor can see all past records
+  Referred doctor’s updates visible to original doctor
+  Track referred patient timeline separately
+
+This builds the “Mediloop network effect.”
+
+ 
+
+  🧪  7) Lab Integration 
+
+Another USP of your system.
+
+     7.1 Doctor Orders Lab Tests 
+
+  Choose nearest partnered lab
+  Select required tests
+  Show patient’s address → choose automatically
+  Book lab appointment
+  Lab receives order immediately
+  Patient gets notification + map link
+
+     7.2 Lab Portal 
+
+  View upcoming test appointments
+  Upload report
+  Auto-notify doctor & patient
+  Mark patient as “sample collected”
+  Mark patient as “report ready”
+
+     7.3 Automatic Report Flow 
+
+  Store lab reports in patient EMR
+  Timeline update
+  Doctor gets urgent alert for critical values
+
+ 
+
+  💊  8) Pharmacy / Medication Stock Module (Phase 2) 
+
+     For Clinic Pharmacy 
+
+  Add medicines & stock
+  Auto-deduct when doctor prescribes
+  Low stock alerts
+  Purchase forecasting
+  Expiry alerts
+  Sales reports
+  Profit tracking
+
+     For Patient 
+
+  Prescription → “Order meds” button
+  Nearby pharmacy recommendation
+  Home delivery option (future)
+
+ 
+
+  💳  9) Billing & Payments 
+
+     For Receptionist 
+
+  Create invoice
+  Consultation fee
+  Procedure fee
+  Lab test fee
+  Discounts
+  Mark as paid
+  Generate PDF receipt
+
+     For Patient 
+
+  Download invoice
+  View payment history
+
+ 
+
+  📊  10) Analytics & Dashboard 
+
+     For Admin 
+
+  Total patients today
+  Upcoming appointments
+  Revenue summary
+  Lab orders summary
+  Referral stats
+  Repeat patient percentage
+  Department-wise load
+  Doctor performance
+
+ 
+
+  🔐  11) Security & Privacy 
+
+  Role-based access
+  Patient data encryption
+  Audit logs
+  Referral access control
+  Secure shareable prescription links
+
+ 
+
+  🏗  12) Technical Architecture (High-Level Checklist) 
+
+(Keep it simple for now)
+
+     Frontend 
+
+  React / Next.js
+  Mobile responsive
+  Separate portals: Doctor, Receptionist, Admin, Lab, Patient
+
+     Backend 
+
+  Node.js / Express / NestJS
+  Authentication (JWT)
+  Role-based authorization
+  Audit logging
+  Webhooks for lab and clinic sync
+  Calendar sync engine
+
+     Database 
+
+  PostgreSQL or Supabase
+  Tables:
+
+    users
+    clinics
+    patients
+    appointments
+    visits
+    medications
+    prescriptions
+    labs
+    lab_orders
+    referrals
+    pharmacy_stock
+    invoices
+
+     Storage 
+
+  Supabase storage / S3 for reports
+
+     Notifications 
+
+  Email (Resend)
+  SMS (Twilio / Indian provider)
+  WhatsApp (future)
+
+ 
+
+  📦  13) Phase-Wise MVP Roadmap 
+
+     Phase 1 — MVP 
+
+  Roles (admin, doctor, receptionist)
+  Appointment booking
+  Queue management
+  EMR (basic)
+  Prescriptions
+  Referrals (basic)
+
+     Phase 2 — Extended Medical Features 
+
+  Labs integration
+  Attachments
+  Advanced EMR templates
+
+     Phase 3 — Clinics Ecosystem 
+
+  Pharmacy
+  Billing
+  Patient app
+  Inventory
+  Analytics
+
+     Phase 4 — Network Scale 
+
+  Multi-clinic patient continuity
+  Doctor-doctor marketplace
+  B2B integrations
+  Insurance support
