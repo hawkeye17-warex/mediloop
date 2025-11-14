@@ -3,7 +3,8 @@ import type { FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { apiFetch, getJson } from '../lib/api';
 
-type Me = { user: { email: string } | null };
+type UserProfile = { email: string; specialty?: string };
+type Me = { user: UserProfile | null };
 
 type Patient = {
   id: string;
@@ -61,6 +62,31 @@ type ReferralsRes = { referrals: Referral[] };
 
 type Specialist = { id: string; name: string; org?: string | null; specialty: string; city: string; contact?: string | null };
 type SpecialistsRes = { specialists: Specialist[] };
+type ModuleSummary = { id: string; name: string; summary: string; tagline?: string; features: string[]; comingSoon?: boolean };
+type ModuleTemplateField = { id: string; label: string; type: 'textarea' | 'input'; placeholder?: string };
+type ModuleTemplateSection = { id: string; title: string; description?: string; fields: ModuleTemplateField[] };
+type ModuleTemplate = {
+  id: string;
+  name: string;
+  template: {
+    vitals: { id: string; label: string; unit?: string }[];
+    sections: ModuleTemplateSection[];
+    orders: { labs: string[]; meds: string[] };
+  };
+};
+type ModulesRes = { modules: ModuleSummary[] };
+type ModuleTemplateRes = { module: ModuleTemplate };
+type Encounter = {
+  id: string;
+  patientId: string;
+  patientName?: string;
+  specialty: string;
+  templateId: string;
+  title: string;
+  data: Record<string, any>;
+  createdAt: number;
+};
+type EncountersRes = { encounters: Encounter[] };
 
 const LAB_TESTS = ['Bloodwork', 'MRI', 'X-Ray', 'Ultrasound'];
 const LAB_STATUSES = ['requested', 'scheduled', 'completed', 'cancelled'] as const;
@@ -73,6 +99,7 @@ const ISSUE_MEDICATIONS: Record<string, string[]> = {
   'Respiratory Infection': ['Azithromycin', 'Amoxicillin', 'Levofloxacin'],
 };
 const ISSUE_OPTIONS = Object.keys(ISSUE_MEDICATIONS);
+const DEFAULT_MEDICATIONS = Array.from(new Set(Object.values(ISSUE_MEDICATIONS).flat()));
 
 const PATIENT_FORM_DEFAULT = {
   name: '',
@@ -118,9 +145,42 @@ const REFERRAL_FORM_DEFAULT: ReferralFormState = {
   notes: '',
 };
 
+
+const GP_VITAL_FIELDS = [
+  { id: 'bloodPressure', label: 'Blood Pressure', unit: 'mmHg' },
+  { id: 'heartRate', label: 'Heart Rate', unit: 'bpm' },
+  { id: 'temperature', label: 'Temperature', unit: 'Â°C' },
+  { id: 'spo2', label: 'SpOâ‚‚', unit: '%' },
+  { id: 'weight', label: 'Weight', unit: 'kg' },
+];
+
+const GP_ENCOUNTER_FORM = {
+  patientId: '',
+  visitType: 'Primary Care Visit',
+  chiefComplaint: '',
+  history: '',
+  ros: '',
+  exam: '',
+  diagnostics: '',
+  assessment: '',
+  plan: '',
+  followUp: '',
+  education: '',
+  vitals: {
+    bloodPressure: '',
+    heartRate: '',
+    temperature: '',
+    spo2: '',
+    weight: '',
+  },
+  labs: [] as string[],
+  meds: [] as string[],
+};
+
+type EncounterFormState = typeof GP_ENCOUNTER_FORM;
 export default function DashboardPage() {
   const navigate = useNavigate();
-  const [me, setMe] = useState<string | null>(null);
+  const [me, setMe] = useState<UserProfile | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [tab, setTab] = useState<'Overview' | 'Patients' | 'Referrals' | 'Schedule' | 'Settings'>('Overview');
 
@@ -132,6 +192,15 @@ export default function DashboardPage() {
   const [labOrdersLoading, setLabOrdersLoading] = useState(false);
   const [referrals, setReferrals] = useState<Referral[]>([]);
   const [referralsLoading, setReferralsLoading] = useState(false);
+
+  const [modules, setModules] = useState<ModuleSummary[]>([]);
+  const [modulesLoading, setModulesLoading] = useState(false);
+  const [activeModule, setActiveModule] = useState<ModuleSummary | null>(null);
+  const [moduleTemplate, setModuleTemplate] = useState<ModuleTemplate | null>(null);
+  const [encounters, setEncounters] = useState<Encounter[]>([]);
+  const [encountersLoading, setEncountersLoading] = useState(false);
+  const [encounterForm, setEncounterForm] = useState<EncounterFormState>(GP_ENCOUNTER_FORM);
+  const [encounterMessage, setEncounterMessage] = useState<string | null>(null);
 
   const [patientForm, setPatientForm] = useState(PATIENT_FORM_DEFAULT);
   const [patientFeedback, setPatientFeedback] = useState<{ kind: 'error' | 'success'; message: string } | null>(null);
@@ -150,6 +219,9 @@ export default function DashboardPage() {
   const [specialistResults, setSpecialistResults] = useState<Specialist[]>([]);
   const [specialistLoading, setSpecialistLoading] = useState(false);
 
+  const userSpecialty = me?.specialty || 'general_physician';
+  const userInitial = (me?.email?.charAt(0) || 'M').toUpperCase();
+
   const handleSessionExpired = useCallback(() => {
     setMe(null);
     navigate('/login');
@@ -161,7 +233,10 @@ export default function DashboardPage() {
       try {
         const res = await apiFetch('/auth/me');
         const data = await getJson<Me>(res);
-        if (!ignore) setMe(data.user?.email ?? null);
+        if (!ignore) {
+          if (!data.user) setMe(null);
+          else setMe({ email: data.user.email, specialty: data.user.specialty || 'general_physician' });
+        }
       } catch (err) {
         console.error('auth me error', err);
       } finally {
@@ -174,6 +249,7 @@ export default function DashboardPage() {
   useEffect(() => {
     if (!authLoading && !me) navigate('/login');
   }, [authLoading, me, navigate]);
+
 
   const loadPatients = useCallback(async () => {
     setPatientsLoading(true);
@@ -238,6 +314,76 @@ export default function DashboardPage() {
       setReferralsLoading(false);
     }
   }, [handleSessionExpired]);
+
+  const loadModules = useCallback(async () => {
+    setModulesLoading(true);
+    try {
+      const res = await apiFetch('/modules');
+      if (res.status === 401) return handleSessionExpired();
+      if (!res.ok) throw new Error('Failed to load modules');
+      const data = await getJson<ModulesRes>(res);
+      setModules(data.modules);
+      const preferred = data.modules.find((m) => !m.comingSoon && m.id === userSpecialty);
+      const fallback = data.modules.find((m) => !m.comingSoon) || null;
+      setActiveModule(preferred || fallback);
+    } catch (err) {
+      console.error('modules error', err);
+      setModules([]);
+      setActiveModule(null);
+    } finally {
+      setModulesLoading(false);
+    }
+  }, [handleSessionExpired, userSpecialty]);
+
+  const loadModuleTemplate = useCallback(async (moduleId: string) => {
+    try {
+      const res = await apiFetch(`/modules/${moduleId}/template`);
+      if (res.status === 401) return handleSessionExpired();
+      if (!res.ok) throw new Error('Failed to load template');
+      const data = await getJson<ModuleTemplateRes>(res);
+      setModuleTemplate(data.module);
+    } catch (err) {
+      console.error('template load error', err);
+      setModuleTemplate(null);
+    }
+  }, [handleSessionExpired]);
+
+  const loadRecentEncounters = useCallback(async (specialtyId: string) => {
+    setEncountersLoading(true);
+    try {
+      const res = await apiFetch(`/encounters/recent?specialty=${specialtyId}`);
+      if (res.status === 401) return handleSessionExpired();
+      if (!res.ok) throw new Error('Failed to load encounters');
+      const data = await getJson<EncountersRes>(res);
+      setEncounters(data.encounters);
+    } catch (err) {
+      console.error('encounter load error', err);
+      setEncounters([]);
+    } finally {
+      setEncountersLoading(false);
+    }
+  }, [handleSessionExpired]);
+
+  useEffect(() => {
+    if (authLoading) return;
+    if (me) void loadModules();
+  }, [authLoading, me, loadModules]);
+
+  useEffect(() => {
+    if (!activeModule || activeModule.comingSoon) {
+      setModuleTemplate(null);
+      setEncounters([]);
+      return;
+    }
+    void loadModuleTemplate(activeModule.id);
+    void loadRecentEncounters(activeModule.id);
+  }, [activeModule, loadModuleTemplate, loadRecentEncounters]);
+
+  useEffect(() => {
+    if (patients.length > 0 && !encounterForm.patientId) {
+      setEncounterForm((prev: EncounterFormState) => ({ ...prev, patientId: prev.patientId || patients[0].id }));
+    }
+  }, [patients, encounterForm.patientId]);
 
   const searchSpecialists = useCallback(async (query: string) => {
     const term = query.trim();
@@ -371,6 +517,10 @@ export default function DashboardPage() {
     return map;
   }, [patients]);
 
+  const vitalsDefinition = moduleTemplate?.template.vitals ?? GP_VITAL_FIELDS;
+  const availableLabs = moduleTemplate?.template.orders.labs ?? ['CBC', 'CMP', 'A1C', 'Lipid Panel', 'Thyroid Panel'];
+  const availableMeds = moduleTemplate?.template.orders.meds ?? DEFAULT_MEDICATIONS;
+
   const groupedAppointments = useMemo(() => {
     const groups = new Map<string, Appointment[]>();
     appointments.forEach((appt) => {
@@ -391,7 +541,7 @@ export default function DashboardPage() {
     const todayVisits = appointments.filter((a) => new Date(a.startTs * 1000).toDateString() === today).length;
     return [
       { label: 'Total Patients', value: uniquePatients.toString(), accent: '#1AA898' },
-      { label: 'Today’s Visits', value: todayVisits.toString(), accent: '#122E3A' },
+      { label: 'Todayâ€™s Visits', value: todayVisits.toString(), accent: '#122E3A' },
       { label: 'Next 7 Days', value: upcomingWeek.toString(), accent: '#BCC46A' },
       { label: 'Active Referrals', value: referralsActive.toString(), accent: '#FB923C' },
     ];
@@ -542,8 +692,86 @@ export default function DashboardPage() {
     }
   }
 
+  function handleEncounterField(field: keyof EncounterFormState, value: any) {
+    setEncounterForm((prev: EncounterFormState) => ({ ...prev, [field]: value }));
+  }
+
+  function handleVitalChange(field: keyof EncounterFormState['vitals'], value: string) {
+    setEncounterForm((prev: EncounterFormState) => ({ ...prev, vitals: { ...prev.vitals, [field]: value } }));
+  }
+
+  function toggleEncounterList(field: 'labs' | 'meds', value: string) {
+    setEncounterForm((prev: EncounterFormState) => {
+      const exists = prev[field].includes(value);
+      return {
+        ...prev,
+        [field]: exists ? prev[field].filter((item) => item !== value) : [...prev[field], value],
+      };
+    });
+  }
+
+  async function handleEncounterSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setEncounterMessage(null);
+    if (!encounterForm.patientId) {
+      setEncounterMessage('Select a patient before saving the encounter.');
+      return;
+    }
+    try {
+      const payload = {
+        templateId: `${activeModule?.id || 'general_physician'}.core`,
+        specialty: activeModule?.id || 'general_physician',
+        title: encounterForm.visitType || 'Clinical visit',
+        summary: encounterForm.chiefComplaint,
+        vitals: encounterForm.vitals,
+        sections: [
+          {
+            id: 'subjective',
+            values: {
+              chiefComplaint: encounterForm.chiefComplaint,
+              history: encounterForm.history,
+              ros: encounterForm.ros,
+            },
+          },
+          {
+            id: 'objective',
+            values: {
+              exam: encounterForm.exam,
+              diagnostics: encounterForm.diagnostics,
+            },
+          },
+          {
+            id: 'assessment',
+            values: { assessment: encounterForm.assessment },
+          },
+          {
+            id: 'plan',
+            values: { plan: encounterForm.plan, followUp: encounterForm.followUp, education: encounterForm.education },
+          },
+        ],
+        orders: { labs: encounterForm.labs, meds: encounterForm.meds },
+        plan: encounterForm.plan,
+        notes: encounterForm.education,
+      };
+      const res = await apiFetch(`/patients/${encounterForm.patientId}/encounters`, { method: 'POST', json: payload });
+      if (res.status === 401) return handleSessionExpired();
+      if (!res.ok) {
+        const info = await res.json().catch(() => null);
+        throw new Error(info?.error || 'Unable to save encounter');
+      }
+      setEncounterForm((prev: EncounterFormState) => ({ ...GP_ENCOUNTER_FORM, patientId: prev.patientId }));
+      setEncounterMessage('Encounter saved.');
+      if (activeModule && !activeModule.comingSoon) {
+        loadRecentEncounters(activeModule.id);
+      }
+    } catch (err) {
+      console.error(err);
+      setEncounterMessage(err instanceof Error ? err.message : 'Unable to save encounter');
+    }
+  }
+
   if (authLoading || !me) {
-    return <div className="min-h-screen flex items-center justify-center text-slate-500">Loading dashboard…</div>;
+    return <div className="min-h-screen flex items-center justify-center text-slate-500">Loading dashboardâ€¦</div>;
   }
 
   const issueMedOptions = apptForm.issueKey ? ISSUE_MEDICATIONS[apptForm.issueKey] ?? [] : [];
@@ -562,7 +790,7 @@ export default function DashboardPage() {
               <button className="w-9 h-9 rounded-full border border-slate-200 bg-white hover:bg-slate-50" title="Notifications" aria-label="Notifications">
                 ??
               </button>
-              <div className="w-9 h-9 rounded-full bg-gradient-to-br from-[#122E3A] to-[#1AA898] text-white flex items-center justify-center text-sm font-semibold">{(me || 'M')[0].toUpperCase()}</div>
+              <div className="w-9 h-9 rounded-full bg-gradient-to-br from-[#122E3A] to-[#1AA898] text-white flex items-center justify-center text-sm font-semibold">{userInitial}</div>
             </div>
           </div>
           <div className="flex items-center gap-2 h-11">
@@ -584,6 +812,21 @@ export default function DashboardPage() {
       <main className="max-w-7xl mx-auto px-4 md:px-6 py-6 space-y-6">
         {tab === 'Overview' && (
           <>
+            <SpecialtyHero module={activeModule} modules={modules} loading={modulesLoading} />
+            {activeModule && !activeModule.comingSoon && (
+              <GeneralPhysicianComposer
+                patients={patients}
+                form={encounterForm}
+                vitals={vitalsDefinition}
+                labs={availableLabs}
+                meds={availableMeds}
+                message={encounterMessage}
+                onField={handleEncounterField}
+                onVital={handleVitalChange}
+                onToggle={toggleEncounterList}
+                onSubmit={handleEncounterSubmit}
+              />
+            )}
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
               {metrics.map((metric) => (
                 <StatCard key={metric.label} {...metric} />
@@ -629,7 +872,7 @@ export default function DashboardPage() {
                   <button className="text-sm text-[#1AA898]" onClick={() => setTab('Schedule')}>Full schedule</button>
                 </div>
                 {appointmentsLoading ? (
-                  <p className="text-sm text-slate-500">Loading appointments…</p>
+                  <p className="text-sm text-slate-500">Loading appointmentsâ€¦</p>
                 ) : groupedAppointments.length === 0 ? (
                   <p className="text-sm text-slate-500">No upcoming appointments scheduled.</p>
                 ) : (
@@ -700,7 +943,7 @@ export default function DashboardPage() {
                             ))}
                           </select>
                         </label>
-                        {labLoading && <p className="text-xs text-slate-500">Finding nearby labs…</p>}
+                        {labLoading && <p className="text-xs text-slate-500">Finding nearby labsâ€¦</p>}
                         {labError && <p className="text-xs text-amber-600">{labError}</p>}
                         {!labLoading && labResults.length > 0 && (
                           <div className="space-y-2 max-h-40 overflow-auto">
@@ -709,7 +952,7 @@ export default function DashboardPage() {
                                 <input type="radio" name="lab-choice" checked={selectedLab?.name === lab.name} onChange={() => setSelectedLab(lab)} />
                                 <span>
                                   <span className="font-semibold text-slate-700">{lab.name}</span>
-                                  <span className="block text-slate-500">{lab.city} · {lab.tests.join(', ')}</span>
+                                  <span className="block text-slate-500">{lab.city} Â· {lab.tests.join(', ')}</span>
                                 </span>
                               </label>
                             ))}
@@ -755,6 +998,10 @@ export default function DashboardPage() {
                 </form>
               </div>
             </section>
+
+            {activeModule && !activeModule.comingSoon && (
+              <EncounterList encounters={encounters} loading={encountersLoading} patientMap={patientMap} />
+            )}
           </>
         )}
 
@@ -764,7 +1011,7 @@ export default function DashboardPage() {
               <header className="px-4 py-3 border-b border-slate-200 flex items-center justify-between">
                 <div>
                   <h2 className="font-semibold">Patients ({patients.length})</h2>
-                  {patientsLoading && <p className="text-xs text-slate-500">Refreshing…</p>}
+                  {patientsLoading && <p className="text-xs text-slate-500">Refreshingâ€¦</p>}
                 </div>
                 <button className="text-sm text-[#1AA898]" onClick={loadPatients}>Refresh</button>
               </header>
@@ -841,7 +1088,7 @@ export default function DashboardPage() {
                       <p className="text-sm text-slate-500">{appt.reason || 'Consult'}</p>
                     </div>
                     <div className="text-sm text-right">
-                      <p className="font-medium">{formatDate(appt.startTs)} · {formatTime(appt.startTs)}</p>
+                      <p className="font-medium">{formatDate(appt.startTs)} Â· {formatTime(appt.startTs)}</p>
                       <Link className="text-xs text-[#1AA898]" to={`/dashboard/patients/${appt.patientId}`}>Open chart</Link>
                     </div>
                   </div>
@@ -854,7 +1101,7 @@ export default function DashboardPage() {
         {tab === 'Settings' && (
           <section className="bg-white rounded-xl border border-slate-200 p-5 space-y-3 text-sm">
             <h2 className="font-semibold">Session</h2>
-            <p>You are signed in as <span className="font-medium">{me}</span>.</p>
+            <p>You are signed in as <span className="font-medium">{me?.email}</span>.</p>
             <p className="text-slate-500">Sessions auto-expire after 7 days of inactivity.</p>
           </section>
         )}
@@ -864,7 +1111,7 @@ export default function DashboardPage() {
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg p-6 space-y-4">
             <div className="flex items-center justify-between">
               <h2 className="text-lg font-semibold">New patient</h2>
-              <button className="text-slate-500 hover:text-slate-900" onClick={() => setShowAddPatientModal(false)}>×</button>
+              <button className="text-slate-500 hover:text-slate-900" onClick={() => setShowAddPatientModal(false)}>Ã—</button>
             </div>
             <AddPatientForm
               form={patientForm}
@@ -940,14 +1187,14 @@ function AddPatientForm({ form, onChange, onSubmit, feedback, saving, submitLabe
         <p className={`text-xs ${feedback.kind === 'error' ? 'text-red-600' : 'text-emerald-600'}`}>{feedback.message}</p>
       )}
       <button type="submit" className="w-full btn btn-primary py-2" disabled={saving}>
-        {saving ? 'Saving…' : submitLabel}
+        {saving ? 'Savingâ€¦' : submitLabel}
       </button>
     </form>
   );
 }
 
 function PatientTable({ patients, loading }: { patients: Patient[]; loading: boolean }) {
-  if (loading) return <p className="text-sm text-slate-500 px-4 py-6">Loading patients…</p>;
+  if (loading) return <p className="text-sm text-slate-500 px-4 py-6">Loading patientsâ€¦</p>;
   if (patients.length === 0) return <p className="text-sm text-slate-500 px-4 py-6">No patients yet. Add one to get started.</p>;
   return (
     <div className="overflow-x-auto">
@@ -966,7 +1213,7 @@ function PatientTable({ patients, loading }: { patients: Patient[]; loading: boo
                 <Link to={`/dashboard/patients/${p.id}`} className="hover:underline">{p.name}</Link>
               </td>
               <td className="px-4 py-3 text-slate-600">
-                <div>{p.phone || '—'}</div>
+                <div>{p.phone || 'â€”'}</div>
                 <div className="text-xs text-slate-500">{p.email || 'No email'}</div>
               </td>
               <td className="px-4 py-3 text-slate-600">{formatRelative(p.createdAt)}</td>
@@ -984,7 +1231,7 @@ function LabOrdersSnapshot({ labOrders, loading, patientMap, onUpdateStatus }: {
   patientMap: Map<string, Patient>;
   onUpdateStatus: (id: number, status: string) => Promise<void> | void;
 }) {
-  if (loading) return <p className="text-sm text-slate-500">Checking lab queue…</p>;
+  if (loading) return <p className="text-sm text-slate-500">Checking lab queueâ€¦</p>;
   if (labOrders.length === 0) return <p className="text-sm text-slate-500">No lab orders yet.</p>;
   return (
     <div className="space-y-3">
@@ -993,7 +1240,7 @@ function LabOrdersSnapshot({ labOrders, loading, patientMap, onUpdateStatus }: {
           <div className="flex items-center justify-between">
             <div>
               <p className="font-semibold text-[#122E3A]">{patientMap.get(order.patientId)?.name || 'Patient'}</p>
-              <p className="text-xs text-slate-500">{order.test} · {order.labName || 'TBD'}</p>
+              <p className="text-xs text-slate-500">{order.test} Â· {order.labName || 'TBD'}</p>
             </div>
             <StatusBadge status={order.status} />
           </div>
@@ -1028,7 +1275,7 @@ function formatDate(ts: number) {
 }
 
 function ReferralSnapshot({ referrals, loading }: { referrals: Referral[]; loading: boolean }) {
-  if (loading) return <p className="text-sm text-slate-500">Loading referrals…</p>;
+  if (loading) return <p className="text-sm text-slate-500">Loading referralsâ€¦</p>;
   if (referrals.length === 0) return <p className="text-sm text-slate-500">No referrals yet.</p>;
   return (
     <ul className="space-y-2 text-sm">
@@ -1088,7 +1335,7 @@ function ReferralComposer({
           }}
         />
       </label>
-      {specialistLoading && <p className="text-xs text-slate-500">Searching…</p>}
+      {specialistLoading && <p className="text-xs text-slate-500">Searchingâ€¦</p>}
       {!specialistLoading && specialists.length > 0 && (
         <ul className="border border-slate-200 rounded-lg divide-y max-h-40 overflow-auto text-sm">
           {specialists.map((spec) => (
@@ -1099,7 +1346,7 @@ function ReferralComposer({
                 onClick={() => onSelectSpecialist(spec)}
               >
                 <p className="font-medium text-[#122E3A]">{spec.name}</p>
-                <p className="text-xs text-slate-500">{spec.specialty} · {spec.city}</p>
+                <p className="text-xs text-slate-500">{spec.specialty} Â· {spec.city}</p>
               </button>
             </li>
           ))}
@@ -1140,7 +1387,7 @@ type ReferralTableProps = {
 };
 
 function ReferralTable({ referrals, loading, onUpdateStatus }: ReferralTableProps) {
-  if (loading) return <p className="text-sm text-slate-500">Loading referrals…</p>;
+  if (loading) return <p className="text-sm text-slate-500">Loading referralsâ€¦</p>;
   if (referrals.length === 0) return <p className="text-sm text-slate-500">No referrals yet.</p>;
   return (
     <div className="overflow-x-auto">
@@ -1162,7 +1409,7 @@ function ReferralTable({ referrals, loading, onUpdateStatus }: ReferralTableProp
               </td>
               <td className="px-3 py-2 text-slate-600">
                 <div>{ref.specialistName}</div>
-                <div className="text-xs text-slate-500">{ref.specialistOrg || '—'}</div>
+                <div className="text-xs text-slate-500">{ref.specialistOrg || 'â€”'}</div>
               </td>
               <td className="px-3 py-2">
                 <select
@@ -1194,6 +1441,240 @@ function formatRelative(tsSeconds: number) {
   const months = Math.floor(days / 30);
   if (months === 1) return '1 month ago';
   return `${months} months ago`;
+}
+
+type SpecialtyHeroProps = {
+  module: ModuleSummary | null;
+  modules: ModuleSummary[];
+  loading: boolean;
+};
+
+function SpecialtyHero({ module, modules, loading }: SpecialtyHeroProps) {
+  if (loading) {
+    return (
+      <section className="bg-white border border-slate-200 rounded-2xl p-6 text-sm text-slate-500">
+        Loading specialty moduleâ€¦
+      </section>
+    );
+  }
+  if (!module) return null;
+  const upcoming = modules.filter((m) => m.id !== module.id);
+  return (
+    <section className="bg-gradient-to-r from-[#122E3A] to-[#1AA898] text-white rounded-3xl p-6 shadow-xl flex flex-col gap-4">
+      <div>
+        <p className="text-xs uppercase tracking-wide text-white/70">Active module</p>
+        <h2 className="text-2xl font-bold">{module.name}</h2>
+        <p className="text-sm text-white/80 mt-1">{module.summary}</p>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        {module.features.map((feature) => (
+          <span key={feature} className="px-3 py-1 rounded-full bg-white/10 text-xs">{feature}</span>
+        ))}
+      </div>
+      {upcoming.length > 0 && (
+        <div className="text-xs text-white/80 space-y-1">
+          <p className="font-semibold">Coming soon</p>
+          <div className="flex flex-wrap gap-2">
+            {upcoming.map((m) => (
+              <span key={m.id} className="px-3 py-1 rounded-full border border-white/30">
+                {m.name}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+type ComposerProps = {
+  patients: Patient[];
+  form: EncounterFormState;
+  vitals: { id: string; label: string; unit?: string }[];
+  labs: string[];
+  meds: string[];
+  message: string | null;
+  onField: (field: keyof EncounterFormState, value: any) => void;
+  onVital: (field: keyof EncounterFormState['vitals'], value: string) => void;
+  onToggle: (field: 'labs' | 'meds', value: string) => void;
+  onSubmit: (e: FormEvent<HTMLFormElement>) => void;
+};
+
+function GeneralPhysicianComposer({ patients, form, vitals, labs, meds, message, onField, onVital, onToggle, onSubmit }: ComposerProps) {
+  if (patients.length === 0) {
+    return (
+      <section className="bg-white rounded-2xl border border-dashed border-slate-300 p-6 text-sm text-slate-500">
+        Add a patient to start documenting encounters.
+      </section>
+    );
+  }
+  return (
+    <section className="bg-white border border-slate-200 rounded-2xl p-6 space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-xl font-semibold text-[#122E3A]">General Physician Encounter</h2>
+          <p className="text-sm text-slate-500">Vitals, SOAP notes, lab + medication orders.</p>
+        </div>
+      </div>
+      <form className="space-y-4" onSubmit={onSubmit}>
+        <div className="grid md:grid-cols-3 gap-4">
+          <label className="text-sm">
+            <span className="font-medium">Patient</span>
+            <select className="mt-1 w-full" value={form.patientId} onChange={(e) => onField('patientId', e.target.value)}>
+              {patients.map((p) => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </select>
+          </label>
+          <label className="text-sm">
+            <span className="font-medium">Visit type</span>
+            <input className="mt-1 w-full" value={form.visitType} onChange={(e) => onField('visitType', e.target.value)} />
+          </label>
+          <label className="text-sm">
+            <span className="font-medium">Chief complaint</span>
+            <input className="mt-1 w-full" value={form.chiefComplaint} onChange={(e) => onField('chiefComplaint', e.target.value)} />
+          </label>
+        </div>
+
+        <div className="grid md:grid-cols-5 gap-3">
+          {vitals.map((vital) => (
+            <label key={vital.id} className="text-xs tracking-wide uppercase text-slate-500">
+              {vital.label}
+              <input
+                className="mt-1 w-full"
+                value={form.vitals[vital.id as keyof typeof form.vitals] as string}
+                onChange={(e) => onVital(vital.id as keyof typeof form.vitals, e.target.value)}
+                placeholder={vital.unit}
+              />
+            </label>
+          ))}
+        </div>
+
+        <div className="grid md:grid-cols-2 gap-4">
+          <label className="text-sm">
+            <span className="font-medium">History of Present Illness</span>
+            <textarea className="mt-1 w-full" rows={3} value={form.history} onChange={(e) => onField('history', e.target.value)} />
+          </label>
+          <label className="text-sm">
+            <span className="font-medium">Review of Systems</span>
+            <textarea className="mt-1 w-full" rows={3} value={form.ros} onChange={(e) => onField('ros', e.target.value)} />
+          </label>
+        </div>
+
+        <div className="grid md:grid-cols-2 gap-4">
+          <label className="text-sm">
+            <span className="font-medium">Physical Exam</span>
+            <textarea className="mt-1 w-full" rows={3} value={form.exam} onChange={(e) => onField('exam', e.target.value)} />
+          </label>
+          <label className="text-sm">
+            <span className="font-medium">Diagnostics Ordered / Reviewed</span>
+            <textarea className="mt-1 w-full" rows={3} value={form.diagnostics} onChange={(e) => onField('diagnostics', e.target.value)} />
+          </label>
+        </div>
+
+        <div className="grid md:grid-cols-2 gap-4">
+          <label className="text-sm">
+            <span className="font-medium">Assessment</span>
+            <textarea className="mt-1 w-full" rows={3} value={form.assessment} onChange={(e) => onField('assessment', e.target.value)} />
+          </label>
+          <label className="text-sm">
+            <span className="font-medium">Plan</span>
+            <textarea className="mt-1 w-full" rows={3} value={form.plan} onChange={(e) => onField('plan', e.target.value)} />
+          </label>
+        </div>
+
+        <div className="grid md:grid-cols-2 gap-4">
+          <label className="text-sm">
+            <span className="font-medium">Follow-up</span>
+            <input className="mt-1 w-full" value={form.followUp} onChange={(e) => onField('followUp', e.target.value)} />
+          </label>
+          <label className="text-sm">
+            <span className="font-medium">Patient education / notes</span>
+            <input className="mt-1 w-full" value={form.education} onChange={(e) => onField('education', e.target.value)} />
+          </label>
+        </div>
+
+        <div className="grid md:grid-cols-2 gap-4">
+          <div>
+            <p className="text-sm font-medium mb-2">Labs to order</p>
+            <div className="flex flex-wrap gap-2">
+              {labs.map((lab) => (
+                <button
+                  key={lab}
+                  type="button"
+                  onClick={() => onToggle('labs', lab)}
+                  className={`px-3 py-1 rounded-full border text-xs ${form.labs.includes(lab) ? 'bg-[#1AA898]/10 border-[#1AA898] text-[#0e7b6e]' : 'border-slate-200 text-slate-600'}`}
+                >
+                  {lab}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div>
+            <p className="text-sm font-medium mb-2">Medications</p>
+            <div className="flex flex-wrap gap-2">
+              {meds.map((med) => (
+                <button
+                  key={med}
+                  type="button"
+                  onClick={() => onToggle('meds', med)}
+                  className={`px-3 py-1 rounded-full border text-xs ${form.meds.includes(med) ? 'bg-[#1AA898]/10 border-[#1AA898] text-[#0e7b6e]' : 'border-slate-200 text-slate-600'}`}
+                >
+                  {med}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {message && <p className="text-xs text-[#1AA898]">{message}</p>}
+
+        <div className="flex items-center justify-between">
+          <div className="text-xs text-slate-500">Auto-saves to the encounters timeline.</div>
+          <button type="submit" className="btn btn-primary px-6 py-2">Save encounter</button>
+        </div>
+      </form>
+    </section>
+  );
+}
+
+type EncounterListProps = {
+  encounters: Encounter[];
+  loading: boolean;
+  patientMap: Map<string, Patient>;
+};
+
+function EncounterList({ encounters, loading, patientMap }: EncounterListProps) {
+  if (loading) {
+    return <section className="bg-white rounded-2xl border border-slate-200 p-4 text-sm text-slate-500">Loading recent encountersâ€¦</section>;
+  }
+  if (encounters.length === 0) {
+    return <section className="bg-white rounded-2xl border border-slate-200 p-4 text-sm text-slate-500">No encounters documented yet.</section>;
+  }
+  return (
+    <section className="bg-white rounded-2xl border border-slate-200 p-4">
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <h2 className="font-semibold text-[#122E3A]">Recent encounters</h2>
+          <p className="text-xs text-slate-500">Latest notes captured in the General Physician module.</p>
+        </div>
+      </div>
+      <div className="space-y-3 max-h-[360px] overflow-auto pr-2">
+        {encounters.map((enc) => (
+          <article key={enc.id} className="border border-slate-200 rounded-xl p-3">
+            <div className="flex items-center justify-between text-xs text-slate-500 mb-1">
+              <span>{enc.title}</span>
+              <span>{new Date(enc.createdAt * 1000).toLocaleString()}</span>
+            </div>
+            <p className="text-sm font-medium text-[#122E3A]">
+              {enc.patientName || patientMap.get(enc.patientId)?.name || 'Patient'}
+            </p>
+            {enc.data?.summary && <p className="text-sm text-slate-600 line-clamp-2">{String(enc.data.summary)}</p>}
+          </article>
+        ))}
+      </div>
+    </section>
+  );
 }
 
 

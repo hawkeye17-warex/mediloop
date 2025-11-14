@@ -160,18 +160,134 @@ const SPECIALTY_MODULES = {
   ophthalmology: {
     id: 'ophthalmology',
     name: 'Ophthalmology Suite',
-    summary: 'Retinal imaging, IOP trends, refraction, OCT — coming soon.',
-    tagline: 'OCT + IOP + refraction workflows',
-    features: ['Visual acuity tracking', 'OCT + fundus imaging upload'],
-    comingSoon: true,
+    summary: 'Refraction, OCT, slit lamp, IOP tracking.',
+    tagline: 'OCT + refraction + IOP workflows',
+    features: ['Visual acuity + refraction', 'OCT & fundus attachments', 'Tonometry & slit-lamp notes'],
+    template: {
+      vitals: [
+        { id: 'acuityOD', label: 'VA OD', unit: '20/xx' },
+        { id: 'acuityOS', label: 'VA OS', unit: '20/xx' },
+        { id: 'iopOD', label: 'IOP OD', unit: 'mmHg' },
+        { id: 'iopOS', label: 'IOP OS', unit: 'mmHg' },
+        { id: 'refraction', label: 'Manifest Refraction' },
+      ],
+      sections: [
+        {
+          id: 'oph_history',
+          title: 'Ophthalmic History',
+          fields: [
+            { id: 'ocularHistory', label: 'Ocular history', type: 'textarea', placeholder: 'Surgeries, trauma, chronic disease' },
+            { id: 'systemicHistory', label: 'Systemic history', type: 'textarea' },
+          ],
+        },
+        {
+          id: 'exam',
+          title: 'Exam / Imaging',
+          fields: [
+            { id: 'slitLamp', label: 'Slit lamp findings', type: 'textarea' },
+            { id: 'oct', label: 'OCT / fundus notes', type: 'textarea' },
+          ],
+        },
+        {
+          id: 'plan',
+          title: 'Plan',
+          fields: [
+            { id: 'ophAssessment', label: 'Assessment', type: 'textarea' },
+            { id: 'ophPlan', label: 'Plan / procedures', type: 'textarea' },
+          ],
+        },
+      ],
+      orders: {
+        labs: ['OCT', 'Visual Field', 'Corneal Topography', 'B-scan'],
+        meds: ['Timolol', 'Latanoprost', 'Prednisolone acetate', 'Moxifloxacin'],
+      },
+    },
   },
   dermatology: {
     id: 'dermatology',
     name: 'Dermatology Suite',
-    summary: 'Lesion mapping, biopsy tracking, telederm captures — coming soon.',
+    summary: 'Lesion mapping, biopsy tracking, telederm captures.',
     tagline: 'Lesion tracking and biopsy coordination',
-    features: ['3D lesion map', 'Biopsy follow-up reminders'],
-    comingSoon: true,
+    features: ['Lesion catalog', 'Biopsy + pathology tracking', 'Treatment plans'],
+    template: {
+      vitals: [
+        { id: 'bodySurface', label: '% BSA involved', unit: '%' },
+        { id: 'dermScore', label: 'Severity score', unit: '0-10' },
+      ],
+      sections: [
+        {
+          id: 'derm_history',
+          title: 'Dermatologic History',
+          fields: [
+            { id: 'lesionHistory', label: 'History of present lesion', type: 'textarea' },
+            { id: 'priorTherapies', label: 'Prior therapies', type: 'textarea' },
+          ],
+        },
+        {
+          id: 'lesion_map',
+          title: 'Lesion Map',
+          fields: [
+            { id: 'lesionLocations', label: 'Locations & description', type: 'textarea', placeholder: 'e.g., A. left cheek, 1.2cm pearly papule' },
+            { id: 'images', label: 'Imaging / dermatoscopy notes', type: 'textarea' },
+          ],
+        },
+        {
+          id: 'treatment',
+          title: 'Treatment & Follow-up',
+          fields: [
+            { id: 'treatmentPlan', label: 'Treatment plan', type: 'textarea' },
+            { id: 'biopsyPlan', label: 'Biopsy / pathology requests', type: 'textarea' },
+          ],
+        },
+      ],
+      orders: {
+        labs: ['Punch biopsy', 'Shave biopsy', 'Pathology consult', 'Patch testing'],
+        meds: ['Clobetasol', 'Doxycycline', 'Isotretinoin', 'Dupilumab'],
+      },
+    },
+  },
+  physiotherapy: {
+    id: 'physiotherapy',
+    name: 'Physiotherapy Suite',
+    summary: 'Session notes, exercise plans, functional goals.',
+    tagline: 'SOAP + functional outcome tracking',
+    features: ['ROM tracking', 'Exercise prescriptions', 'Goal setting'],
+    template: {
+      vitals: [
+        { id: 'painScore', label: 'Pain score', unit: '/10' },
+        { id: 'rom', label: 'Key ROM measurement' },
+      ],
+      sections: [
+        {
+          id: 'subjective',
+          title: 'Subjective',
+          fields: [
+            { id: 'painNarrative', label: 'Pain narrative', type: 'textarea' },
+            { id: 'functionalGoals', label: 'Functional goals', type: 'textarea' },
+          ],
+        },
+        {
+          id: 'objective',
+          title: 'Objective',
+          fields: [
+            { id: 'strength', label: 'Strength / ROM findings', type: 'textarea' },
+            { id: 'specialTests', label: 'Special tests', type: 'textarea' },
+          ],
+        },
+        {
+          id: 'plan',
+          title: 'Plan & Exercises',
+          fields: [
+            { id: 'sessionPlan', label: 'Session plan', type: 'textarea' },
+            { id: 'homeExercise', label: 'Home exercise program', type: 'textarea' },
+          ],
+        },
+      ],
+      orders: {
+        labs: ['Functional outcome measure', 'Gait analysis', 'Strength testing'],
+        meds: ['NSAID advice', 'Topical analgesic', 'Muscle relaxant'],
+      },
+    },
   },
 };
 
