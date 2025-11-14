@@ -171,11 +171,23 @@ async function ensureClinicForUser(userId) {
   const localPart = (user.email || 'clinic').split('@')[0] || 'clinic';
   const slugBase = localPart.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'clinic';
   const slug = `${slugBase}-${Math.floor(Math.random() * 9000 + 1000)}`;
+  const rawOwnerId = user.id;
+  const ownerId =
+    typeof rawOwnerId === 'string' && /^[0-9a-fA-F-]{32,36}$/.test(rawOwnerId) ? rawOwnerId : null;
   const defaults = buildDefaultSettings();
   const clinic = (
     await query(
       'insert into clinics (name, slug, address, owner_id, timezone, contact_email, created_at, settings) values ($1,$2,$3,$4,$5,$6,$7,$8) returning id',
-      [`${localPart} Clinic`, slug, null, userId, 'America/Toronto', user.email || null, nowS(), JSON.stringify(defaults)]
+      [
+        `${localPart} Clinic`,
+        slug,
+        null,
+        ownerId,
+        'America/Toronto',
+        user.email || null,
+        nowS(),
+        JSON.stringify(defaults),
+      ]
     )
   )[0];
   await query('update users set clinic_id=$1 where id=$2', [clinic.id, userId]);
