@@ -144,7 +144,7 @@ async function ensureCoreSchema() {
   await query('alter table patients add column if not exists clinic_id uuid');
   await query(`create table if not exists payments (
     id uuid primary key default gen_random_uuid(),
-    appointment_id uuid references appointments(id) on delete cascade,
+    appointment_id text not null,
     clinic_id uuid,
     patient_id text,
     amount_cents integer not null,
@@ -155,6 +155,8 @@ async function ensureCoreSchema() {
     receipt_number text,
     created_at bigint not null
   )`);
+  await query('alter table payments drop constraint if exists payments_appointment_id_fkey');
+  await query('alter table payments alter column appointment_id type text using appointment_id::text');
   await query('create index if not exists idx_payments_clinic on payments(clinic_id, created_at)');
   await query(`create table if not exists staff_invites (
     id uuid primary key default gen_random_uuid(),
