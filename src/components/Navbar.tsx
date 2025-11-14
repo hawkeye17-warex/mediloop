@@ -16,7 +16,8 @@ export default function Navbar() {
           <NavLink to="/clinics" className={({isActive})=>`hover:text-[\#1AA898] ${isActive? 'text-[#1AA898]':'text-slate-700'}`}>For Clinics</NavLink>
           <NavLink to="/about" className={({isActive})=>`hover:text-[\#1AA898] ${isActive? 'text-[#1AA898]':'text-slate-700'}`}>About</NavLink>
           <NavLink to="/contact" className={({isActive})=>`hover:text-[\#1AA898] ${isActive? 'text-[#1AA898]':'text-slate-700'}`}>Contact</NavLink>
-          <NavLink to="/login" className="btn btn-primary px-4 py-2 shadow-elevate">Login</NavLink>
+          <NavLink to="/login" className="btn btn-secondary px-4 py-2 shadow-elevate">Login</NavLink>
+          <NavLink to="/register" className="btn btn-primary px-4 py-2 shadow-elevate">Register</NavLink>
         </nav>
         <div className="md:hidden">
           <button
@@ -39,7 +40,8 @@ export default function Navbar() {
           <a href="/clinics" className="block text-slate-700 hover:text-[#1AA898]">For Clinics</a>
           <a href="/about" className="block text-slate-700 hover:text-[#1AA898]">About</a>
           <a href="/contact" className="block text-slate-700 hover:text-[#1AA898]">Contact</a>
-          <a href="/login" className="block text-white btn btn-primary text-center py-2">Login</a>
+          <a href="/login" className="block text-white btn btn-secondary text-center py-2">Login</a>
+          <a href="/register" className="block text-white btn btn-primary text-center py-2">Register</a>
         </div>
       )}
     </header>
