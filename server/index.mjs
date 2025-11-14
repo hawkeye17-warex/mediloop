@@ -90,39 +90,6 @@ async function ensureCoreSchema() {
     status integer,
     created_at bigint not null
   )`);
-}
-
-ensureCoreSchema().catch((err) => {
-  console.error('Failed to ensure core schema', err);
-});
-
-
-async function ensureCoreSchema() {
-  await query(`create table if not exists clinics (
-    id uuid primary key default gen_random_uuid(),
-    name text not null,
-    slug text,
-    address text,
-    owner_id uuid,
-    timezone text,
-    contact_email text,
-    created_at bigint not null
-  )`);
-  await query('alter table users add column if not exists role text');
-  await query('alter table users add column if not exists clinic_id uuid references clinics(id)');
-  await query('update users set role = coalesce(role, $1)', [DEFAULT_ROLE]);
-  await query(`create table if not exists audit_logs (
-    id uuid primary key default gen_random_uuid(),
-    user_id uuid,
-    method text,
-    path text,
-    ip text,
-    user_agent text,
-    created_at bigint not null
-  )`);
-  await query('alter table appointments add column if not exists clinic_id uuid');
-  await query(`alter table appointments add column if not exists status text default 'scheduled'`);
-  await query('alter table appointments add column if not exists triage_notes text');
   await query('alter table patients add column if not exists clinic_id uuid');
 }
 
@@ -155,8 +122,6 @@ const hash = (t) => crypto.createHash('sha256').update(t).digest('hex');
 
 authenticator.options = { step: 30, window: 1, digits: 6 };
 
-const DEFAULT_ROLE = 'doctor';
-const ROLES = ['admin','doctor','receptionist'];
 
 const DEFAULT_ROLE = 'doctor';
 const ROLES = ['admin', 'doctor', 'receptionist'];
