@@ -69,6 +69,17 @@ async function ensureCoreSchema() {
   await query('alter table users add column if not exists role text');
   await query('alter table users add column if not exists clinic_id uuid references clinics(id)');
   await query('update users set role = coalesce(role, $1)', [DEFAULT_ROLE]);
+  await query(`create table if not exists appointments (
+    id uuid primary key default gen_random_uuid(),
+    patient_id text not null,
+    user_id uuid not null references users(id) on delete cascade,
+    clinic_id uuid,
+    start_ts bigint not null,
+    reason text,
+    status text default 'scheduled',
+    triage_notes text,
+    created_at bigint not null
+  )`);
   await query(`create table if not exists audit_logs (
     id uuid primary key default gen_random_uuid(),
     user_id uuid,
