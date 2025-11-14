@@ -126,11 +126,15 @@ async function ensureCoreSchema() {
     code text not null unique,
     status text not null default 'pending',
     expires_at bigint,
-    created_by uuid references users(id),
+    created_by text,
     created_at bigint not null,
     accepted_at bigint,
-    accepted_user_id uuid references users(id)
+    accepted_user_id text
   )`);
+  await query('alter table staff_invites drop constraint if exists staff_invites_created_by_fkey');
+  await query('alter table staff_invites drop constraint if exists staff_invites_accepted_user_id_fkey');
+  await query('alter table staff_invites alter column created_by type text using created_by::text');
+  await query('alter table staff_invites alter column accepted_user_id type text using accepted_user_id::text');
   await query('create index if not exists idx_staff_invites_email on staff_invites(lower(email))');
 }
 
