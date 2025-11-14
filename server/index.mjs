@@ -81,6 +81,12 @@ async function ensureCoreSchema() {
     triage_notes text,
     created_at bigint not null
   )`);
+  await query('alter table appointments add column if not exists fee_cents integer default 0');
+  await query('alter table appointments add column if not exists payment_status text default \'unpaid\'');
+  await query('alter table appointments add column if not exists visit_type text');
+  await query('alter table appointments add column if not exists notes text');
+  await query('alter table appointments add column if not exists updated_at bigint');
+  await query('alter table appointments add column if not exists patient_name_snapshot text');
   await query(`create table if not exists lab_orders (
     id uuid primary key default gen_random_uuid(),
     patient_id text not null,
@@ -92,6 +98,7 @@ async function ensureCoreSchema() {
     notes text,
     created_at bigint not null
   )`);
+  await query('alter table lab_orders add column if not exists clinic_id uuid');
   await query(`create table if not exists referrals (
     id uuid primary key default gen_random_uuid(),
     patient_id text not null,
@@ -107,6 +114,7 @@ async function ensureCoreSchema() {
     created_at bigint not null,
     updated_at bigint not null
   )`);
+  await query('alter table referrals add column if not exists clinic_id uuid');
   await query(`create table if not exists audit_logs (
     id uuid primary key default gen_random_uuid(),
     user_id uuid,
@@ -118,6 +126,20 @@ async function ensureCoreSchema() {
     created_at bigint not null
   )`);
   await query('alter table patients add column if not exists clinic_id uuid');
+  await query(`create table if not exists payments (
+    id uuid primary key default gen_random_uuid(),
+    appointment_id uuid references appointments(id) on delete cascade,
+    clinic_id uuid,
+    patient_id text,
+    amount_cents integer not null,
+    method text,
+    status text default 'paid',
+    note text,
+    recorded_by uuid references users(id),
+    receipt_number text,
+    created_at bigint not null
+  )`);
+  await query('create index if not exists idx_payments_clinic on payments(clinic_id, created_at)');
   await query(`create table if not exists staff_invites (
     id uuid primary key default gen_random_uuid(),
     clinic_id uuid references clinics(id) on delete cascade,
@@ -160,9 +182,43 @@ async function ensureClinicForUser(userId) {
   return clinic.id;
 }
 
+async function backfillClinicScope(clinicId, userId) {
+  if (!clinicId || !userId) return;
+  try {
+    await query('update patients set clinic_id=$1 where clinic_id is null and user_id=$2', [clinicId, userId]);
+  } catch (err) {
+    console.warn('patient clinic backfill failed', err);
+  }
+  try {
+    await query('update appointments set clinic_id=$1 where clinic_id is null and user_id=$2', [clinicId, userId]);
+  } catch (err) {
+    console.warn('appointment clinic backfill failed', err);
+  }
+  try {
+    await query('update lab_orders set clinic_id=$1 where clinic_id is null and user_id=$2', [clinicId, userId]);
+  } catch (err) {
+    console.warn('lab clinic backfill failed', err);
+  }
+  try {
+    await query('update referrals set clinic_id=$1 where clinic_id is null and user_id=$2', [clinicId, userId]);
+  } catch (err) {
+    console.warn('referral clinic backfill failed', err);
+  }
+}
+
+async function requireClinicId(req) {
+  if (req.userClinicId) return req.userClinicId;
+  const clinicId = await ensureClinicForUser(req.userId);
+  req.userClinicId = clinicId;
+  await backfillClinicScope(clinicId, req.userId);
+  return clinicId;
+}
+
 async function seedUserDemoData(userId) {
   const count = await query('select count(*)::int as count from patients where user_id=$1', [userId]);
   if (Number(count[0]?.count || 0) > 0) return;
+  const clinicId = await ensureClinicForUser(userId);
+  await backfillClinicScope(clinicId, userId);
   const now = nowS();
   const mkId = () => (crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(12).toString('hex'));
   const patientSeeds = [
@@ -174,8 +230,8 @@ async function seedUserDemoData(userId) {
   ];
   for (const patient of patientSeeds) {
     await query(
-      'insert into patients (id, user_id, name, dob, gender, phone, email, address, created_at) values ($1,$2,$3,$4,$5,$6,$7,$8,$9)',
-      [patient.id, userId, patient.name, patient.dob, patient.gender, patient.phone, patient.email, patient.address, now]
+      'insert into patients (id, user_id, clinic_id, name, dob, gender, phone, email, address, created_at) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',
+      [patient.id, userId, clinicId, patient.name, patient.dob, patient.gender, patient.phone, patient.email, patient.address, now]
     );
   }
 
@@ -188,8 +244,8 @@ async function seedUserDemoData(userId) {
   ];
   for (const appt of appointmentSeeds) {
     await query(
-      'insert into appointments (id, patient_id, user_id, clinic_id, start_ts, reason, status, triage_notes, created_at) values ($1,$2,$3,$4,$5,$6,$7,$8,$9)',
-      [mkId(), appt.patientId, userId, null, now + appt.offset, appt.reason, appt.status, appt.triage, now]
+      'insert into appointments (id, patient_id, user_id, clinic_id, start_ts, reason, status, triage_notes, payment_status, created_at) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',
+      [mkId(), appt.patientId, userId, clinicId, now + appt.offset, appt.reason, appt.status, appt.triage, appt.status === 'completed' ? 'paid' : 'unpaid', now]
     );
   }
 
@@ -200,8 +256,8 @@ async function seedUserDemoData(userId) {
   ];
   for (const order of labSeeds) {
     await query(
-      'insert into lab_orders (id, patient_id, user_id, test, lab_name, lab_city, status, notes, created_at) values ($1,$2,$3,$4,$5,$6,$7,$8,$9)',
-      [mkId(), order.patientId, userId, order.test, order.labName, order.labCity, order.status, order.notes, now]
+      'insert into lab_orders (id, patient_id, user_id, clinic_id, test, lab_name, lab_city, status, notes, created_at) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',
+      [mkId(), order.patientId, userId, clinicId, order.test, order.labName, order.labCity, order.status, order.notes, now]
     );
   }
 
@@ -244,11 +300,12 @@ async function seedUserDemoData(userId) {
     const id = mkId();
     const nowTs = now;
     await query(
-      'insert into referrals (id, patient_id, user_id, patient_name, specialist_id, specialist_name, specialist_org, status, reason, notes, urgency, created_at, updated_at) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)',
+      'insert into referrals (id, patient_id, user_id, clinic_id, patient_name, specialist_id, specialist_name, specialist_org, status, reason, notes, urgency, created_at, updated_at) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)',
       [
         id,
         referral.patientId,
         userId,
+        clinicId,
         referral.patientName,
         referral.specialistId,
         referral.specialistName,
@@ -576,6 +633,10 @@ const withAuth = (handler) =>
     req.userRole = user.role || DEFAULT_ROLE;
     req.userSpecialty = user.specialty || DEFAULT_SPECIALTY;
     req.userClinicId = user.clinic_id || null;
+    if (!req.userClinicId) {
+      req.userClinicId = await ensureClinicForUser(user.id);
+    }
+    await backfillClinicScope(req.userClinicId, user.id);
     return handler(req, res);
   });
 
@@ -1088,9 +1149,14 @@ app.get(
 app.get(
   '/api/patients',
   withAuth(async (req, res) => {
+    const clinicId = await requireClinicId(req);
     const patients = await query(
-      'select id, name, dob, gender, phone, email, address, created_at from patients where user_id=$1 order by created_at desc limit 200',
-      [req.userId]
+      `select id, name, dob, gender, phone, email, address, created_at
+       from patients
+       where (clinic_id=$1 or user_id=$2)
+       order by created_at desc
+       limit 200`,
+      [clinicId, req.userId]
     );
     res.json({ patients });
   })
@@ -1102,9 +1168,10 @@ app.post(
     const { name, dob, gender, phone, email, address } = req.body || {};
     if (!name) return res.status(400).json({ error: 'name_required' });
     const id = crypto.randomBytes(6).toString('hex');
+    const clinicId = await requireClinicId(req);
     await query(
-      'insert into patients (id, user_id, name, dob, gender, phone, email, address, created_at) values ($1,$2,$3,$4,$5,$6,$7,$8,$9)',
-      [id, req.userId, name, dob || null, gender || null, phone || null, email || null, address || null, nowS()]
+      'insert into patients (id, user_id, clinic_id, name, dob, gender, phone, email, address, created_at) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',
+      [id, req.userId, clinicId, name, dob || null, gender || null, phone || null, email || null, address || null, nowS()]
     );
     res.json({ id });
   })
@@ -1113,13 +1180,14 @@ app.post(
 app.get(
   '/api/patients/:id',
   withAuth(async (req, res) => {
+    const clinicId = await requireClinicId(req);
     const patient = (
-      await query('select * from patients where id=$1 and user_id=$2', [req.params.id, req.userId])
+      await query('select * from patients where id=$1 and (clinic_id=$2 or user_id=$3)', [req.params.id, clinicId, req.userId])
     )[0];
     if (!patient) return res.status(404).json({ error: 'not_found' });
     const notes = await query(
-      'select id, content, soap_subjective, soap_objective, soap_assessment, soap_plan, attachments_json, created_at from patient_notes where patient_id=$1 and user_id=$2 order by created_at desc limit 200',
-      [patient.id, req.userId]
+      'select id, content, soap_subjective, soap_objective, soap_assessment, soap_plan, attachments_json, created_at from patient_notes where patient_id=$1 order by created_at desc limit 200',
+      [patient.id]
     );
     const formattedNotes = notes.map((note) => ({
       id: note.id,
@@ -1135,16 +1203,16 @@ app.get(
       createdAt: note.created_at,
     }));
     const appointments = await query(
-      'select id, patient_id, start_ts, reason from appointments where patient_id=$1 and user_id=$2 order by start_ts desc limit 200',
-      [patient.id, req.userId]
+      'select id, patient_id, start_ts, reason, status, payment_status, fee_cents from appointments where patient_id=$1 order by start_ts desc limit 200',
+      [patient.id]
     );
     const labs = await query(
-      'select id, patient_id, test, lab_name, lab_city, status, notes, created_at from lab_orders where patient_id=$1 and user_id=$2 order by created_at desc limit 200',
-      [patient.id, req.userId]
+      'select id, patient_id, test, lab_name, lab_city, status, notes, created_at from lab_orders where patient_id=$1 order by created_at desc limit 200',
+      [patient.id]
     );
     const files = await query(
-      'select id, filename, mime, size, created_at from patient_files where patient_id=$1 and user_id=$2 order by created_at desc',
-      [patient.id, req.userId]
+      'select id, filename, mime, size, created_at from patient_files where patient_id=$1 order by created_at desc',
+      [patient.id]
     );
     res.json({
       patient: {
@@ -1192,13 +1260,14 @@ app.put(
 app.get(
   '/api/patients/:id/encounters',
   withAuth(async (req, res) => {
+    const clinicId = await requireClinicId(req);
     const patient = (
-      await query('select id from patients where id=$1 and user_id=$2', [req.params.id, req.userId])
+      await query('select id from patients where id=$1 and (clinic_id=$2 or user_id=$3)', [req.params.id, clinicId, req.userId])
     )[0];
     if (!patient) return res.status(404).json({ error: 'not_found' });
     const rows = await query(
-      'select id, title, specialty, template_id, data, created_at from encounters where patient_id=$1 and user_id=$2 order by created_at desc limit 100',
-      [patient.id, req.userId]
+      'select id, title, specialty, template_id, data, created_at from encounters where patient_id=$1 order by created_at desc limit 100',
+      [patient.id]
     );
     const encounters = rows.map((row) => ({
       id: row.id,
@@ -1216,8 +1285,9 @@ app.get(
 app.post(
   '/api/patients/:id/encounters',
   withAuth(async (req, res) => {
+    const clinicId = await requireClinicId(req);
     const patient = (
-      await query('select id from patients where id=$1 and user_id=$2', [req.params.id, req.userId])
+      await query('select id from patients where id=$1 and (clinic_id=$2 or user_id=$3)', [req.params.id, clinicId, req.userId])
     )[0];
     if (!patient) return res.status(404).json({ error: 'not_found' });
     const {
@@ -1335,23 +1405,194 @@ app.post(
 app.post(
   '/api/appointments',
   withRole(['admin', 'doctor', 'receptionist'], async (req, res) => {
-    const { patientId, startTs, reason } = req.body || {};
+    const { patientId, startTs, reason, visitType, triageNotes, feeCents, paymentStatus, notes } = req.body || {};
     if (!patientId || !startTs) return res.status(400).json({ error: 'invalid_input' });
+    const clinicId = await requireClinicId(req);
     const id = crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(12).toString('hex');
     await query(
-      'insert into appointments (id, patient_id, user_id, clinic_id, start_ts, reason, status, created_at) values ($1,$2,$3,$4,$5,$6,$7,$8)',
-      [id, patientId, req.userId, req.userClinicId || null, Number(startTs), reason || null, 'scheduled', nowS()]
+      `insert into appointments
+        (id, patient_id, user_id, clinic_id, start_ts, reason, status, triage_notes, visit_type, fee_cents, payment_status, notes, created_at)
+        values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+      [
+        id,
+        patientId,
+        req.userId,
+        clinicId,
+        Number(startTs),
+        reason || null,
+        'scheduled',
+        triageNotes || null,
+        visitType || null,
+        typeof feeCents === 'number' ? Math.max(0, Math.trunc(feeCents)) : 0,
+        paymentStatus || 'unpaid',
+        notes || null,
+        nowS(),
+      ]
     );
     res.json({ id });
   })
 );
 
-// Already defined earlier? ensure referencing withRole.
+app.get(
+  '/api/reception/patients',
+  withRole(['admin', 'doctor', 'receptionist'], async (req, res) => {
+    const clinicId = await requireClinicId(req);
+    const search = String(req.query.search || '').trim().toLowerCase();
+    let rows;
+    if (search) {
+      const pattern = `%${search}%`;
+      rows = await query(
+        `select id, name, phone, email, address, created_at
+         from patients
+         where (clinic_id=$1 or user_id=$2)
+           and (lower(name) like $3 or lower(email) like $3 or phone like $4)
+         order by created_at desc
+         limit 50`,
+        [clinicId, req.userId, pattern, `%${search}%`]
+      );
+    } else {
+      rows = await query(
+        `select id, name, phone, email, address, created_at
+         from patients
+         where (clinic_id=$1 or user_id=$2)
+         order by created_at desc
+         limit 50`,
+        [clinicId, req.userId]
+      );
+    }
+    res.json({ patients: rows });
+  })
+);
+
+app.get(
+  '/api/reception/queue',
+  withRole(['admin', 'doctor', 'receptionist'], async (req, res) => {
+    const clinicId = await requireClinicId(req);
+    const now = new Date();
+    const startOfDay = Math.floor(new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime() / 1000);
+    const endOfDay = startOfDay + 86400;
+    const rows = await query(
+      `select a.id,
+              a.patient_id as "patientId",
+              a.start_ts as "startTs",
+              a.status,
+              a.reason,
+              a.triage_notes as "triageNotes",
+              a.visit_type as "visitType",
+              a.fee_cents as "feeCents",
+              a.payment_status as "paymentStatus",
+              p.name as "patientName",
+              p.phone as "patientPhone"
+       from appointments a
+       left join patients p on p.id = a.patient_id
+       where (a.clinic_id=$1 or a.user_id=$2)
+         and a.start_ts between $3 and $4
+       order by a.start_ts asc`,
+      [clinicId, req.userId, startOfDay, endOfDay]
+    );
+    res.json({ appointments: rows, startOfDay, endOfDay });
+  })
+);
+
+app.get(
+  '/api/appointments/calendar',
+  withRole(['admin', 'doctor', 'receptionist'], async (req, res) => {
+    const clinicId = await requireClinicId(req);
+    const now = nowS();
+    const from = Number(req.query.from) || now - 86400 * 2;
+    const to = Number(req.query.to) || from + 86400 * 14;
+    const rows = await query(
+      `select a.id,
+              a.patient_id as "patientId",
+              a.start_ts as "startTs",
+              a.status,
+              a.reason,
+              a.visit_type as "visitType",
+              p.name as "patientName"
+       from appointments a
+       left join patients p on p.id = a.patient_id
+       where (a.clinic_id=$1 or a.user_id=$2)
+         and a.start_ts between $3 and $4
+       order by a.start_ts asc`,
+      [clinicId, req.userId, from, to]
+    );
+    res.json({ appointments: rows });
+  })
+);
+
+app.post(
+  '/api/reception/payments',
+  withRole(['admin', 'doctor', 'receptionist'], async (req, res) => {
+    const { appointmentId, amountCents, method, status, note } = req.body || {};
+    if (!appointmentId || typeof amountCents !== 'number') return res.status(400).json({ error: 'invalid_input' });
+    const clinicId = await requireClinicId(req);
+    const appt = (
+      await query('select id, patient_id from appointments where id=$1 and (clinic_id=$2 or user_id=$3)', [
+        appointmentId,
+        clinicId,
+        req.userId,
+      ])
+    )[0];
+    if (!appt) return res.status(404).json({ error: 'not_found' });
+    const paymentId = crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(12).toString('hex');
+    const receiptNumber = `ML-${Date.now()}`;
+    await query(
+      `insert into payments (id, appointment_id, clinic_id, patient_id, amount_cents, method, status, note, recorded_by, receipt_number, created_at)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+      [
+        paymentId,
+        appointmentId,
+        clinicId,
+        appt.patient_id,
+        Math.max(0, Math.trunc(amountCents)),
+        method || 'card',
+        status || 'paid',
+        note || null,
+        req.userId,
+        receiptNumber,
+        nowS(),
+      ]
+    );
+    await query(
+      'update appointments set payment_status=$1 where id=$2 and (clinic_id=$3 or user_id=$4)',
+      [status || 'paid', appointmentId, clinicId, req.userId]
+    );
+    res.json({ id: paymentId, receiptNumber });
+  })
+);
+
+app.get(
+  '/api/reception/payments',
+  withRole(['admin', 'doctor', 'receptionist'], async (req, res) => {
+    const clinicId = await requireClinicId(req);
+    const days = Math.min(30, Math.max(1, Number(req.query.days) || 7));
+    const cutoff = nowS() - days * 86400;
+    const rows = await query(
+      `select id,
+              appointment_id as "appointmentId",
+              patient_id as "patientId",
+              amount_cents as "amountCents",
+              method,
+              status,
+              note,
+              receipt_number as "receiptNumber",
+              created_at as "createdAt"
+       from payments
+       where clinic_id=$1
+         and created_at >= $2
+       order by created_at desc
+       limit 200`,
+      [clinicId, cutoff]
+    );
+    res.json({ payments: rows });
+  })
+);
 
 // ---------- Lab Orders ----------
 app.get(
   '/api/lab-orders',
   withAuth(async (req, res) => {
+    const clinicId = await requireClinicId(req);
     const rows = await query(
       `select id,
               patient_id as "patientId",
@@ -1362,10 +1603,10 @@ app.get(
               notes,
               created_at as "createdAt"
        from lab_orders
-       where user_id=$1
+       where (clinic_id=$1 or user_id=$2)
        order by created_at desc
        limit 200`,
-      [req.userId]
+      [clinicId, req.userId]
     );
     res.json({ labOrders: rows });
   })
@@ -1376,10 +1617,11 @@ app.post(
   withRole(['admin', 'doctor', 'receptionist'], async (req, res) => {
     const { patientId, test, labName, labCity, notes } = req.body || {};
     if (!patientId || !test) return res.status(400).json({ error: 'invalid_input' });
+    const clinicId = await requireClinicId(req);
     const id = crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(12).toString('hex');
     await query(
-      'insert into lab_orders (id, patient_id, user_id, test, lab_name, lab_city, status, notes, created_at) values ($1,$2,$3,$4,$5,$6,$7,$8,$9)',
-      [id, patientId, req.userId, test, labName || null, labCity || null, 'requested', notes || null, nowS()]
+      'insert into lab_orders (id, patient_id, user_id, clinic_id, test, lab_name, lab_city, status, notes, created_at) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',
+      [id, patientId, req.userId, clinicId, test, labName || null, labCity || null, 'requested', notes || null, nowS()]
     );
     res.json({ id });
   })
@@ -1390,9 +1632,10 @@ app.patch(
   withRole(['admin', 'doctor', 'receptionist'], async (req, res) => {
     const { status, notes } = req.body || {};
     if (!status && !notes) return res.status(400).json({ error: 'no_changes' });
+    const clinicId = await requireClinicId(req);
     await query(
-      'update lab_orders set status=coalesce($1,status), notes=coalesce($2,notes) where id=$3 and user_id=$4',
-      [status || null, notes || null, req.params.id, req.userId]
+      'update lab_orders set status=coalesce($1,status), notes=coalesce($2,notes) where id=$3 and (clinic_id=$4 or user_id=$5)',
+      [status || null, notes || null, req.params.id, clinicId, req.userId]
     );
     res.json({ ok: true });
   })
