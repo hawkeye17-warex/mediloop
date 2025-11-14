@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { apiFetch, getJson } from '../lib/api';
 
-type ApiError = { error?: string };
+type ApiError = { error?: string; role?: string };
 
 const SPECIALTY_OPTIONS = [
   {
@@ -30,6 +30,7 @@ export default function RegisterPage() {
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
   const [specialty, setSpecialty] = useState('general_physician');
+  const [role, setRole] = useState<'doctor' | 'receptionist'>('doctor');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
@@ -52,11 +53,15 @@ export default function RegisterPage() {
     try {
       const res = await apiFetch('/auth/register', {
         method: 'POST',
-        json: { email: email.trim().toLowerCase(), password, specialty },
+        json: { email: email.trim().toLowerCase(), password, specialty, role },
       });
+      const registerInfo = await safeJson(res);
       if (!res.ok) {
-        const body = await safeJson(res);
-        setError(body?.error || 'Could not create your account. Try again.');
+        if (registerInfo?.error === 'account_exists') {
+          setError('Account already exists. Please log in.');
+        } else {
+          setError(registerInfo?.error || 'Could not create your account. Try again.');
+        }
         return;
       }
 
@@ -64,12 +69,15 @@ export default function RegisterPage() {
         method: 'POST',
         json: { email: email.trim().toLowerCase(), password },
       });
+      const loginInfo = await safeJson(loginRes);
       if (!loginRes.ok) {
         setInfo('Account created! Please log in.');
         return;
       }
+      const target =
+        loginInfo?.role === 'receptionist' ? '/reception' : loginInfo?.role === 'admin' ? '/admin' : '/dashboard';
       setInfo('Account created. Redirecting…');
-      window.location.href = '/dashboard';
+      window.location.href = target;
     } catch {
       setError('Auth server unreachable.');
     } finally {
@@ -124,7 +132,7 @@ export default function RegisterPage() {
                 onChange={(e) => setConfirm(e.target.value)}
               />
             </label>
-            <div>
+            <div className="space-y-3">
               <span className="text-sm font-medium">Choose your specialty module</span>
               <div className="mt-3 space-y-3">
                 {SPECIALTY_OPTIONS.map((option) => (
@@ -151,6 +159,18 @@ export default function RegisterPage() {
                   </label>
                 ))}
               </div>
+              <div>
+                <span className="text-sm font-medium">Select your role</span>
+                <p className="text-xs text-slate-500 mb-2">Admins must invite staff; sign up here as a doctor or receptionist.</p>
+                <div className="flex gap-4">
+                  {['doctor', 'receptionist'].map((value) => (
+                    <label key={value} className="flex items-center gap-2 text-sm">
+                      <input type="radio" value={value} checked={role === value} onChange={(e)=>setRole(e.target.value as 'doctor' | 'receptionist')} />
+                      {value === 'doctor' ? 'Doctor' : 'Receptionist'}
+                    </label>
+                  ))}
+                </div>
+              </div>
             </div>
             <button type="submit" className="w-full btn btn-primary py-2 disabled:opacity-60" disabled={loading}>
               {loading ? 'Creating account…' : 'Sign Up'}
@@ -170,4 +190,3 @@ export default function RegisterPage() {
     </div>
   );
 }
-

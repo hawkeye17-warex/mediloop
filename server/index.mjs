@@ -80,6 +80,32 @@ async function ensureCoreSchema() {
     triage_notes text,
     created_at bigint not null
   )`);
+  await query(`create table if not exists lab_orders (
+    id uuid primary key default gen_random_uuid(),
+    patient_id text not null,
+    user_id uuid not null references users(id) on delete cascade,
+    test text,
+    lab_name text,
+    lab_city text,
+    status text default 'requested',
+    notes text,
+    created_at bigint not null
+  )`);
+  await query(`create table if not exists referrals (
+    id uuid primary key default gen_random_uuid(),
+    patient_id text not null,
+    user_id uuid not null references users(id) on delete cascade,
+    patient_name text,
+    specialist_id text,
+    specialist_name text,
+    specialist_org text,
+    status text default 'pending',
+    reason text,
+    notes text,
+    urgency text,
+    created_at bigint not null,
+    updated_at bigint not null
+  )`);
   await query(`create table if not exists audit_logs (
     id uuid primary key default gen_random_uuid(),
     user_id uuid,
@@ -125,6 +151,7 @@ authenticator.options = { step: 30, window: 1, digits: 6 };
 
 const DEFAULT_ROLE = 'doctor';
 const ROLES = ['admin', 'doctor', 'receptionist'];
+const SIGNUP_ROLES = ['doctor', 'receptionist'];
 
 const LABS = [
   { name: 'Prairie Labs - Downtown', city: 'Winnipeg', tests: ['Bloodwork', 'MRI', 'X-Ray'] },
@@ -448,15 +475,14 @@ app.post(
     const password = String(req.body?.password || '');
     const requestedSpecialty = String(req.body?.specialty || '').trim();
     const specialty = SPECIALTY_IDS.includes(requestedSpecialty) ? requestedSpecialty : DEFAULT_SPECIALTY;
+    const requestedRole = String(req.body?.role || '').trim();
+    const role = SIGNUP_ROLES.includes(requestedRole) ? requestedRole : DEFAULT_ROLE;
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) || password.length < 6) {
       return res.status(400).json({ error: 'invalid_input' });
     }
-    let user = await getUserByEmail(email);
-    if (!user) user = await createUser(email, specialty, DEFAULT_ROLE);
-    else if (user.specialty !== specialty) {
-      await query('update users set specialty=$1 where id=$2', [specialty, user.id]);
-      user.specialty = specialty;
-    }
+    const existing = await getUserByEmail(email);
+    if (existing) return res.status(409).json({ error: 'account_exists' });
+    const user = await createUser(email, specialty, role);
     const ph = await argon2.hash(password);
     await query('update users set password_hash=$1 where id=$2', [ph, user.id]);
     res.json({ ok: true, role: user.role || DEFAULT_ROLE });
@@ -901,7 +927,12 @@ app.get(
   '/api/appointments/upcoming',
   withAuth(async (req, res) => {
     const rows = await query(
-      `select a.id, a.patient_id, a.start_ts, a.reason, a.status, p.name as patient_name
+      `select a.id,
+              a.patient_id as "patientId",
+              a.start_ts as "startTs",
+              a.reason,
+              a.status,
+              p.name as "patientName"
        from appointments a
        left join patients p on p.id = a.patient_id
        where a.user_id=$1
@@ -963,6 +994,152 @@ app.post(
   })
 );
 
+// ---------- Appointments ----------
+app.post(
+  '/api/appointments',
+  withRole(['admin', 'doctor', 'receptionist'], async (req, res) => {
+    const { patientId, startTs, reason } = req.body || {};
+    if (!patientId || !startTs) return res.status(400).json({ error: 'invalid_input' });
+    const id = crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(12).toString('hex');
+    await query(
+      'insert into appointments (id, patient_id, user_id, clinic_id, start_ts, reason, status, created_at) values ($1,$2,$3,$4,$5,$6,$7,$8)',
+      [id, patientId, req.userId, req.userClinicId || null, Number(startTs), reason || null, 'scheduled', nowS()]
+    );
+    res.json({ id });
+  })
+);
+
+// Already defined earlier? ensure referencing withRole.
+
+// ---------- Lab Orders ----------
+app.get(
+  '/api/lab-orders',
+  withAuth(async (req, res) => {
+    const rows = await query(
+      `select id,
+              patient_id as "patientId",
+              test,
+              lab_name as "labName",
+              lab_city as "labCity",
+              status,
+              notes,
+              created_at as "createdAt"
+       from lab_orders
+       where user_id=$1
+       order by created_at desc
+       limit 200`,
+      [req.userId]
+    );
+    res.json({ labOrders: rows });
+  })
+);
+
+app.post(
+  '/api/lab-orders',
+  withRole(['admin', 'doctor', 'receptionist'], async (req, res) => {
+    const { patientId, test, labName, labCity, notes } = req.body || {};
+    if (!patientId || !test) return res.status(400).json({ error: 'invalid_input' });
+    const id = crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(12).toString('hex');
+    await query(
+      'insert into lab_orders (id, patient_id, user_id, test, lab_name, lab_city, status, notes, created_at) values ($1,$2,$3,$4,$5,$6,$7,$8,$9)',
+      [id, patientId, req.userId, test, labName || null, labCity || null, 'requested', notes || null, nowS()]
+    );
+    res.json({ id });
+  })
+);
+
+app.patch(
+  '/api/lab-orders/:id',
+  withRole(['admin', 'doctor', 'receptionist'], async (req, res) => {
+    const { status, notes } = req.body || {};
+    if (!status && !notes) return res.status(400).json({ error: 'no_changes' });
+    await query(
+      'update lab_orders set status=coalesce($1,status), notes=coalesce($2,notes) where id=$3 and user_id=$4',
+      [status || null, notes || null, req.params.id, req.userId]
+    );
+    res.json({ ok: true });
+  })
+);
+
+// ---------- Referrals ----------
+app.get(
+  '/api/referrals',
+  withAuth(async (req, res) => {
+    const rows = await query(
+      `select id,
+              patient_id as "patientId",
+              patient_name as "patientName",
+              specialist_id as "specialistId",
+              specialist_name as "specialistName",
+              specialist_org as "specialistOrg",
+              status,
+              reason,
+              notes,
+              urgency,
+              created_at as "createdAt",
+              updated_at as "updatedAt"
+       from referrals
+       where user_id=$1
+       order by updated_at desc
+       limit 200`,
+      [req.userId]
+    );
+    res.json({ referrals: rows });
+  })
+);
+
+app.post(
+  '/api/referrals',
+  withRole(['admin', 'doctor'], async (req, res) => {
+    const {
+      patientId,
+      patientName,
+      specialistId,
+      specialistName,
+      specialistOrg,
+      urgency,
+      reason,
+      notes,
+    } = req.body || {};
+    if (!patientId || !specialistName) return res.status(400).json({ error: 'invalid_input' });
+    const id = crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(12).toString('hex');
+    const now = nowS();
+    await query(
+      `insert into referrals
+        (id, patient_id, user_id, patient_name, specialist_id, specialist_name, specialist_org, status, reason, notes, urgency, created_at, updated_at)
+        values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+      [
+        id,
+        patientId,
+        req.userId,
+        patientName || null,
+        specialistId || null,
+        specialistName,
+        specialistOrg || null,
+        'pending',
+        reason || null,
+        notes || null,
+        urgency || 'routine',
+        now,
+        now,
+      ]
+    );
+    res.json({ id });
+  })
+);
+
+app.patch(
+  '/api/referrals/:id',
+  withRole(['admin', 'doctor'], async (req, res) => {
+    const { status, notes } = req.body || {};
+    if (!status && !notes) return res.status(400).json({ error: 'no_changes' });
+    await query(
+      'update referrals set status=coalesce($1,status), notes=coalesce($2,notes), updated_at=$3 where id=$4 and user_id=$5',
+      [status || null, notes || null, nowS(), req.params.id, req.userId]
+    );
+    res.json({ ok: true });
+  })
+);
 if (process.env.VERCEL !== '1') {
   app.listen(PORT, () => {
     console.log('[server] listening on http://localhost:' + PORT);
