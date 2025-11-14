@@ -58,6 +58,22 @@ ensureSpecialtySchema().catch((err) => {
 });
 
 async function ensureCoreSchema() {
+  const forceText = async (table, column) => {
+    try {
+      await query(
+        `alter table ${table} alter column ${column} type text using ${column}::text`
+      );
+    } catch (err) {
+      if (DEBUG) console.warn(`skip text cast ${table}.${column}`, err.message || err);
+    }
+  };
+  const dropFk = async (table, constraint) => {
+    try {
+      await query(`alter table ${table} drop constraint if exists ${constraint}`);
+    } catch (err) {
+      if (DEBUG) console.warn(`skip drop constraint ${constraint}`, err.message || err);
+    }
+  };
   await query(`create table if not exists clinics (
     id uuid primary key default gen_random_uuid(),
     name text not null,
@@ -88,8 +104,8 @@ async function ensureCoreSchema() {
   await query('alter table appointments add column if not exists status text default \'scheduled\'');
   await query('alter table appointments add column if not exists triage_notes text');
   await query('alter table appointments add column if not exists reason text');
-  await query('alter table appointments drop constraint if exists appointments_user_id_fkey');
-  await query('alter table appointments alter column user_id type text using user_id::text');
+  await dropFk('appointments', 'appointments_user_id_fkey');
+  await forceText('appointments', 'user_id');
   await query('alter table appointments add column if not exists fee_cents integer default 0');
   await query('alter table appointments add column if not exists payment_status text default \'unpaid\'');
   await query('alter table appointments add column if not exists visit_type text');
@@ -109,8 +125,8 @@ async function ensureCoreSchema() {
     created_at bigint not null
   )`);
   await query('alter table lab_orders add column if not exists clinic_id uuid');
-  await query('alter table lab_orders drop constraint if exists lab_orders_user_id_fkey');
-  await query('alter table lab_orders alter column user_id type text using user_id::text');
+  await dropFk('lab_orders', 'lab_orders_user_id_fkey');
+  await forceText('lab_orders', 'user_id');
   await query(`create table if not exists referrals (
     id uuid primary key default gen_random_uuid(),
     patient_id text not null,
@@ -128,8 +144,8 @@ async function ensureCoreSchema() {
     updated_at bigint not null
   )`);
   await query('alter table referrals add column if not exists clinic_id uuid');
-  await query('alter table referrals drop constraint if exists referrals_user_id_fkey');
-  await query('alter table referrals alter column user_id type text using user_id::text');
+  await dropFk('referrals', 'referrals_user_id_fkey');
+  await forceText('referrals', 'user_id');
   await query(`create table if not exists audit_logs (
     id uuid primary key default gen_random_uuid(),
     user_id text,
@@ -158,6 +174,9 @@ async function ensureCoreSchema() {
   await query('alter table payments drop constraint if exists payments_appointment_id_fkey');
   await query('alter table payments alter column appointment_id type text using appointment_id::text');
   await query('create index if not exists idx_payments_clinic on payments(clinic_id, created_at)');
+  await dropFk('payments', 'payments_appointment_id_fkey');
+  await forceText('payments', 'appointment_id');
+  await forceText('payments', 'recorded_by');
   await query(`create table if not exists staff_invites (
     id uuid primary key default gen_random_uuid(),
     clinic_id uuid references clinics(id) on delete cascade,
