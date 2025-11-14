@@ -66,6 +66,7 @@ async function ensureCoreSchema() {
     contact_email text,
     created_at bigint not null
   )`);
+  await query('alter table clinics add column if not exists settings jsonb default \'{}\'::jsonb');
   await query('alter table users add column if not exists role text');
   await query('alter table users add column if not exists clinic_id uuid references clinics(id)');
   await query('update users set role = coalesce(role, $1)', [DEFAULT_ROLE]);
@@ -117,11 +118,43 @@ async function ensureCoreSchema() {
     created_at bigint not null
   )`);
   await query('alter table patients add column if not exists clinic_id uuid');
+  await query(`create table if not exists staff_invites (
+    id uuid primary key default gen_random_uuid(),
+    clinic_id uuid references clinics(id) on delete cascade,
+    email text not null,
+    role text not null,
+    code text not null unique,
+    status text not null default 'pending',
+    expires_at bigint,
+    created_by uuid references users(id),
+    created_at bigint not null,
+    accepted_at bigint,
+    accepted_user_id uuid references users(id)
+  )`);
+  await query('create index if not exists idx_staff_invites_email on staff_invites(lower(email))');
 }
 
 ensureCoreSchema().catch((err) => {
   console.error('Failed to ensure core schema', err);
 });
+
+async function ensureClinicForUser(userId) {
+  const user = await getUserById(userId);
+  if (!user) throw new Error('user_not_found');
+  if (user.clinic_id) return user.clinic_id;
+  const localPart = (user.email || 'clinic').split('@')[0] || 'clinic';
+  const slugBase = localPart.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'clinic';
+  const slug = `${slugBase}-${Math.floor(Math.random() * 9000 + 1000)}`;
+  const defaults = buildDefaultSettings();
+  const clinic = (
+    await query(
+      'insert into clinics (name, slug, address, owner_id, timezone, contact_email, created_at, settings) values ($1,$2,$3,$4,$5,$6,$7,$8) returning id',
+      [`${localPart} Clinic`, slug, null, userId, 'America/Toronto', user.email || null, nowS(), JSON.stringify(defaults)]
+    )
+  )[0];
+  await query('update users set clinic_id=$1 where id=$2', [clinic.id, userId]);
+  return clinic.id;
+}
 
 async function seedUserDemoData(userId) {
   const count = await query('select count(*)::int as count from patients where user_id=$1', [userId]);
@@ -272,6 +305,58 @@ const SPECIALISTS = [
   { id: 'derm-sunrise', name: 'Dr. Noah Reyes', org: 'Sunrise Dermatology', specialty: 'Dermatology', city: 'Calgary', contact: 'hello@sunrisederm.ca' },
   { id: 'endo-clarion', name: 'Dr. Mila Chen', org: 'Clarion Endocrine Clinic', specialty: 'Endocrinology', city: 'Ottawa', contact: 'referrals@clarionendo.ca' },
 ];
+
+const WEEK_DAYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
+const DEFAULT_CLINIC_TIMINGS = WEEK_DAYS.reduce((acc, day) => {
+  acc[day] = { open: '08:00', close: '17:00', closed: day === 'sun' };
+  return acc;
+}, {});
+const PERMISSION_OPTIONS = ['appointments', 'queue', 'encounters', 'labs', 'referrals', 'billing', 'analytics', 'pharmacy'];
+const DEFAULT_CLINIC_PERMISSIONS = {
+  admin: ['appointments', 'queue', 'encounters', 'labs', 'referrals', 'billing', 'analytics', 'pharmacy'],
+  doctor: ['appointments', 'encounters', 'labs', 'referrals', 'analytics'],
+  receptionist: ['appointments', 'queue', 'billing'],
+};
+const DEFAULT_CLINIC_SETTINGS = {
+  departments: ['Family Medicine'],
+  specialties: ['General Physician'],
+  timings: DEFAULT_CLINIC_TIMINGS,
+  permissions: DEFAULT_CLINIC_PERMISSIONS,
+};
+
+const cloneTimings = () => JSON.parse(JSON.stringify(DEFAULT_CLINIC_TIMINGS));
+const normalizeTimings = (timings = {}) => {
+  const next = cloneTimings();
+  for (const day of WEEK_DAYS) {
+    const payload = timings?.[day] || {};
+    next[day] = {
+      open: typeof payload.open === 'string' && payload.open ? payload.open : next[day].open,
+      close: typeof payload.close === 'string' && payload.close ? payload.close : next[day].close,
+      closed: Boolean(payload.closed),
+    };
+  }
+  return next;
+};
+const normalizePermissions = (perms = {}) => {
+  const result = { ...DEFAULT_CLINIC_PERMISSIONS };
+  for (const role of Object.keys(DEFAULT_CLINIC_PERMISSIONS)) {
+    const list = Array.isArray(perms?.[role]) ? perms[role] : result[role];
+    result[role] = Array.from(new Set(list.filter((p) => PERMISSION_OPTIONS.includes(p))));
+  }
+  return result;
+};
+const buildDefaultSettings = () => ({
+  departments: [...DEFAULT_CLINIC_SETTINGS.departments],
+  specialties: [...DEFAULT_CLINIC_SETTINGS.specialties],
+  timings: cloneTimings(),
+  permissions: normalizePermissions(),
+});
+const materializeClinicSettings = (raw = {}) => ({
+  departments: Array.isArray(raw?.departments) && raw.departments.length ? raw.departments : [...DEFAULT_CLINIC_SETTINGS.departments],
+  specialties: Array.isArray(raw?.specialties) && raw.specialties.length ? raw.specialties : [...DEFAULT_CLINIC_SETTINGS.specialties],
+  timings: normalizeTimings(raw?.timings),
+  permissions: normalizePermissions(raw?.permissions),
+});
 
 const DEFAULT_SPECIALTY = 'general_physician';
 const SPECIALTY_MODULES = {
@@ -546,6 +631,31 @@ async function createUser(email, specialty = DEFAULT_SPECIALTY, role = DEFAULT_R
     await query('insert into users (email, specialty, role, clinic_id, created_at) values ($1,$2,$3,$4,$5) returning *', [email, specialty, role, clinicId, nowS()])
   )[0];
 }
+
+async function applyInviteToUser(email, userId) {
+  const invite = (
+    await query(
+      `select * from staff_invites
+       where lower(email)=$1 and status='pending'
+       order by created_at desc
+       limit 1`,
+      [email.toLowerCase()]
+    )
+  )[0];
+  if (!invite) return null;
+  if (invite.expires_at && invite.expires_at < nowS()) {
+    await query('update staff_invites set status=$1 where id=$2', ['expired', invite.id]);
+    return null;
+  }
+  await query('update users set role=$1, clinic_id=coalesce(clinic_id, $2) where id=$3', [invite.role, invite.clinic_id, userId]);
+  await query('update staff_invites set status=$1, accepted_at=$2, accepted_user_id=$3 where id=$4', [
+    'accepted',
+    nowS(),
+    userId,
+    invite.id,
+  ]);
+  return invite;
+}
 function issueSession(res, userId) {
   const token = crypto.randomBytes(32).toString('base64url');
   query('insert into sessions (user_id, token_hash, expires_at, created_at) values ($1,$2,$3,$4)', [
@@ -589,6 +699,7 @@ app.post(
     const user = await createUser(email, specialty, role);
     const ph = await argon2.hash(password);
     await query('update users set password_hash=$1 where id=$2', [ph, user.id]);
+    await applyInviteToUser(email, user.id);
     await seedUserDemoData(user.id);
     res.json({ ok: true, role: user.role || DEFAULT_ROLE });
   })
@@ -761,8 +872,10 @@ if (DEBUG) {
 app.get(
   '/api/admin/users',
   withRole(['admin'], async (req, res) => {
+    const clinicId = await ensureClinicForUser(req.userId);
     const rows = await query(
-      'select id, email, role, specialty, clinic_id, created_at from users order by created_at desc limit 200'
+      'select id, email, role, specialty, clinic_id, created_at from users where clinic_id=$1 order by created_at desc limit 200',
+      [clinicId]
     );
     res.json({ users: rows });
   })
@@ -773,14 +886,24 @@ app.post(
   withRole(['admin'], async (req, res) => {
     const email = String(req.body?.email || '').trim().toLowerCase();
     const role = ROLES.includes(req.body?.role) ? req.body.role : DEFAULT_ROLE;
+    const expiresDays = Math.max(1, Math.min(60, Number(req.body?.expiresDays) || 14));
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return res.status(400).json({ error: 'invalid_email' });
-    let user = await getUserByEmail(email);
-    if (user) {
-      await query('update users set role=$1 where id=$2', [role, user.id]);
+    const clinicId = await ensureClinicForUser(req.userId);
+    const existing = await getUserByEmail(email);
+    if (existing) {
+      await query('update users set role=$1, clinic_id=$2 where id=$3', [role, clinicId, existing.id]);
       return res.json({ ok: true, existing: true });
     }
-    user = await createUser(email, DEFAULT_SPECIALTY, role);
-    res.json({ ok: true, userId: user.id });
+    const code = crypto.randomBytes(6).toString('hex');
+    const invite = (
+      await query(
+        `insert into staff_invites (clinic_id, email, role, code, expires_at, created_by, created_at)
+         values ($1,$2,$3,$4,$5,$6,$7)
+         returning id, email, role, code, status, expires_at, created_at`,
+        [clinicId, email, role, code, nowS() + expiresDays * 86400, req.userId, nowS()]
+      )
+    )[0];
+    res.json({ ok: true, invite });
   })
 );
 
@@ -789,7 +912,104 @@ app.patch(
   withRole(['admin'], async (req, res) => {
     const role = ROLES.includes(req.body?.role) ? req.body.role : null;
     if (!role) return res.status(400).json({ error: 'invalid_role' });
-    await query('update users set role=$1 where id=$2', [role, req.params.id]);
+    const clinicId = await ensureClinicForUser(req.userId);
+    await query('update users set role=$1 where id=$2 and clinic_id=$3', [role, req.params.id, clinicId]);
+    res.json({ ok: true });
+  })
+);
+
+app.delete(
+  '/api/admin/users/:id',
+  withRole(['admin'], async (req, res) => {
+    if (req.params.id === req.userId) return res.status(400).json({ error: 'cannot_remove_self' });
+    const clinicId = await ensureClinicForUser(req.userId);
+    await query('delete from users where id=$1 and clinic_id=$2', [req.params.id, clinicId]);
+    res.json({ ok: true });
+  })
+);
+
+app.get(
+  '/api/admin/invites',
+  withRole(['admin'], async (req, res) => {
+    const clinicId = await ensureClinicForUser(req.userId);
+    const rows = await query(
+      `select id, email, role, code, status, expires_at, created_at, accepted_at
+       from staff_invites
+       where clinic_id=$1
+       order by created_at desc
+       limit 100`,
+      [clinicId]
+    );
+    res.json({ invites: rows });
+  })
+);
+
+app.post(
+  '/api/admin/invites/:id/revoke',
+  withRole(['admin'], async (req, res) => {
+    const clinicId = await ensureClinicForUser(req.userId);
+    await query('update staff_invites set status=$1 where id=$2 and clinic_id=$3 and status=$4', [
+      'revoked',
+      req.params.id,
+      clinicId,
+      'pending',
+    ]);
+    res.json({ ok: true });
+  })
+);
+
+app.get(
+  '/api/admin/clinic',
+  withRole(['admin'], async (req, res) => {
+    const clinicId = await ensureClinicForUser(req.userId);
+    const clinic = (
+      await query('select id, name, address, timezone, contact_email, settings from clinics where id=$1', [clinicId])
+    )[0];
+    const materialized = materializeClinicSettings(clinic?.settings || {});
+    res.json({
+      clinic: {
+        id: clinicId,
+        name: clinic?.name || 'Your Clinic',
+        address: clinic?.address || '',
+        timezone: clinic?.timezone || 'America/Toronto',
+        contactEmail: clinic?.contact_email || '',
+        departments: materialized.departments,
+        specialties: materialized.specialties,
+        timings: materialized.timings,
+        permissions: materialized.permissions,
+      },
+    });
+  })
+);
+
+app.put(
+  '/api/admin/clinic',
+  withRole(['admin'], async (req, res) => {
+    const clinicId = await ensureClinicForUser(req.userId);
+    const name = String(req.body?.name || '').trim();
+    const address = typeof req.body?.address === 'string' ? req.body.address : null;
+    const timezone = typeof req.body?.timezone === 'string' && req.body.timezone ? req.body.timezone : null;
+    const contactEmail = typeof req.body?.contactEmail === 'string' ? req.body.contactEmail : null;
+    const departments = Array.isArray(req.body?.departments)
+      ? req.body.departments.map((d) => String(d).trim()).filter(Boolean)
+      : DEFAULT_CLINIC_SETTINGS.departments;
+    const specialties = Array.isArray(req.body?.specialties)
+      ? req.body.specialties.map((d) => String(d).trim()).filter(Boolean)
+      : DEFAULT_CLINIC_SETTINGS.specialties;
+    const settings = {
+      departments,
+      specialties,
+      timings: normalizeTimings(req.body?.timings || {}),
+      permissions: normalizePermissions(req.body?.permissions || {}),
+    };
+    await query('update clinics set name=$1, address=$2, timezone=$3, contact_email=$4, settings=$5 where id=$6', [
+      name || 'Untitled Clinic',
+      address,
+      timezone || 'America/Toronto',
+      contactEmail,
+      JSON.stringify(settings),
+      clinicId,
+    ]);
     res.json({ ok: true });
   })
 );
