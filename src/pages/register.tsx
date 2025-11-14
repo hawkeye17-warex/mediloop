@@ -4,10 +4,32 @@ import { apiFetch, getJson } from '../lib/api';
 
 type ApiError = { error?: string };
 
+const SPECIALTY_OPTIONS = [
+  {
+    id: 'general_physician',
+    label: 'General Physician (Family / Internal Medicine)',
+    description: 'Vitals, SOAP notes, labs, medications, referrals — ready today.',
+    available: true,
+  },
+  {
+    id: 'ophthalmology',
+    label: 'Ophthalmology (coming soon)',
+    description: 'Refraction, OCT, slit-lamp, IOP tracking.',
+    available: false,
+  },
+  {
+    id: 'dermatology',
+    label: 'Dermatology (coming soon)',
+    description: 'Lesion mapping, biopsy tracking, telederm captures.',
+    available: false,
+  },
+];
+
 export default function RegisterPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
+  const [specialty, setSpecialty] = useState('general_physician');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
@@ -30,7 +52,7 @@ export default function RegisterPage() {
     try {
       const res = await apiFetch('/auth/register', {
         method: 'POST',
-        json: { email: email.trim().toLowerCase(), password },
+        json: { email: email.trim().toLowerCase(), password, specialty },
       });
       if (!res.ok) {
         const body = await safeJson(res);
@@ -102,6 +124,34 @@ export default function RegisterPage() {
                 onChange={(e) => setConfirm(e.target.value)}
               />
             </label>
+            <div>
+              <span className="text-sm font-medium">Choose your specialty module</span>
+              <div className="mt-3 space-y-3">
+                {SPECIALTY_OPTIONS.map((option) => (
+                  <label
+                    key={option.id}
+                    className={`flex items-start gap-3 rounded-2xl border px-4 py-3 ${option.available ? 'border-slate-200 bg-white' : 'border-dashed border-slate-300 bg-slate-50'}`}
+                  >
+                    <input
+                      type="radio"
+                      name="specialty"
+                      value={option.id}
+                      disabled={!option.available}
+                      checked={specialty === option.id}
+                      onChange={() => setSpecialty(option.id)}
+                      className="mt-1"
+                    />
+                    <div>
+                      <p className="text-sm font-semibold text-slate-900">
+                        {option.label}
+                        {!option.available && <span className="ml-2 text-xs uppercase tracking-wide text-amber-600">Coming soon</span>}
+                      </p>
+                      <p className="text-xs text-slate-500">{option.description}</p>
+                    </div>
+                  </label>
+                ))}
+              </div>
+            </div>
             <button type="submit" className="w-full btn btn-primary py-2 disabled:opacity-60" disabled={loading}>
               {loading ? 'Creating account…' : 'Sign Up'}
             </button>
@@ -120,3 +170,4 @@ export default function RegisterPage() {
     </div>
   );
 }
+

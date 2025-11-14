@@ -29,6 +29,32 @@ async function query(text, params = []) {
 
 const nowS = () => Math.floor(Date.now() / 1000);
 
+async function ensureSpecialtySchema() {
+  try {
+    await query('create extension if not exists "pgcrypto"');
+  } catch (err) {
+    console.warn('extension init failed', err);
+  }
+  await query('alter table users add column if not exists specialty text');
+  await query('update users set specialty=$1 where specialty is null', [DEFAULT_SPECIALTY]);
+  await query(`create table if not exists encounters (
+    id uuid primary key default gen_random_uuid(),
+    patient_id text not null,
+    user_id uuid not null references users(id) on delete cascade,
+    specialty text not null,
+    template_id text,
+    title text,
+    data jsonb,
+    created_at bigint not null
+  )`);
+  await query('create index if not exists idx_encounters_user on encounters(user_id)');
+  await query('create index if not exists idx_encounters_patient on encounters(patient_id)');
+}
+
+ensureSpecialtySchema().catch((err) => {
+  console.error('Failed to ensure specialty schema', err);
+});
+
 // ---------- Crypto helpers ----------
 const RAW_SECRET = process.env.AUTH_SECRET || 'dev-secret-change-me';
 const KEY = crypto.scryptSync(RAW_SECRET, 'mediloop-salt', 32);
@@ -70,6 +96,87 @@ const SPECIALISTS = [
   { id: 'endo-clarion', name: 'Dr. Mila Chen', org: 'Clarion Endocrine Clinic', specialty: 'Endocrinology', city: 'Ottawa', contact: 'referrals@clarionendo.ca' },
 ];
 
+const DEFAULT_SPECIALTY = 'general_physician';
+const SPECIALTY_MODULES = {
+  general_physician: {
+    id: 'general_physician',
+    name: 'General Physician Suite',
+    tagline: 'Vitals, SOAP notes, labs, prescriptions, referrals',
+    summary:
+      'Built for everyday primary-care workflows. Capture vitals, document a structured encounter, queue labs, issue prescriptions, and assign follow-ups in one pass.',
+    features: ['Vitals dashboard', 'SOAP encounter composer', 'Lab + prescription orders', 'Referral tracking'],
+    template: {
+      vitals: [
+        { id: 'bloodPressure', label: 'Blood Pressure', unit: 'mmHg' },
+        { id: 'heartRate', label: 'Heart Rate', unit: 'bpm' },
+        { id: 'temperature', label: 'Temperature', unit: '°C' },
+        { id: 'spo2', label: 'SpO₂', unit: '%' },
+        { id: 'weight', label: 'Weight', unit: 'kg' },
+      ],
+      sections: [
+        {
+          id: 'subjective',
+          title: 'Subjective',
+          description: 'Symptoms, concerns, ROS',
+          fields: [
+            { id: 'chiefComplaint', label: 'Chief Complaint', type: 'textarea', placeholder: 'Fatigue, headaches, etc.' },
+            { id: 'history', label: 'History of Present Illness', type: 'textarea', placeholder: 'Timeline, triggers, relieving factors' },
+            { id: 'ros', label: 'Review of Systems', type: 'textarea', placeholder: 'Pertinent positives / negatives' },
+          ],
+        },
+        {
+          id: 'objective',
+          title: 'Objective',
+          description: 'Exam findings, diagnostics',
+          fields: [
+            { id: 'exam', label: 'Physical Exam', type: 'textarea', placeholder: 'General appearance, cardio, resp, neuro...' },
+            { id: 'diagnostics', label: 'Diagnostics Reviewed / Ordered', type: 'textarea', placeholder: 'Lab panels, imaging, ECG, etc.' },
+          ],
+        },
+        {
+          id: 'assessment',
+          title: 'Assessment',
+          description: 'Differential, ICD notes',
+          fields: [
+            { id: 'assessment', label: 'Assessment', type: 'textarea', placeholder: 'Dx with rationale' },
+          ],
+        },
+        {
+          id: 'plan',
+          title: 'Plan',
+          description: 'Treatment, follow-up, patient education',
+          fields: [
+            { id: 'plan', label: 'Plan', type: 'textarea', placeholder: 'Medication changes, lifestyle coaching, follow-up interval' },
+            { id: 'followUp', label: 'Follow-up instructions', type: 'textarea', placeholder: 'Call back in 2 weeks, schedule lab draw, etc.' },
+          ],
+        },
+      ],
+      orders: {
+        labs: ['CBC', 'CMP', 'A1C', 'Lipid Panel', 'Thyroid Panel', 'Urinalysis'],
+        meds: ['Metformin', 'Lisinopril', 'Atorvastatin', 'Duloxetine', 'Gabapentin'],
+      },
+    },
+  },
+  ophthalmology: {
+    id: 'ophthalmology',
+    name: 'Ophthalmology Suite',
+    summary: 'Retinal imaging, IOP trends, refraction, OCT — coming soon.',
+    tagline: 'OCT + IOP + refraction workflows',
+    features: ['Visual acuity tracking', 'OCT + fundus imaging upload'],
+    comingSoon: true,
+  },
+  dermatology: {
+    id: 'dermatology',
+    name: 'Dermatology Suite',
+    summary: 'Lesion mapping, biopsy tracking, telederm captures — coming soon.',
+    tagline: 'Lesion tracking and biopsy coordination',
+    features: ['3D lesion map', 'Biopsy follow-up reminders'],
+    comingSoon: true,
+  },
+};
+
+const SPECIALTY_IDS = Object.keys(SPECIALTY_MODULES);
+
 // ---------- Middleware helpers ----------
 const asyncHandler = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
@@ -109,9 +216,9 @@ async function getUserByEmail(email) {
 async function getUserById(id) {
   return (await query('select * from users where id=$1', [id]))[0];
 }
-async function createUser(email) {
+async function createUser(email, specialty = DEFAULT_SPECIALTY) {
   return (
-    await query('insert into users (email, created_at) values ($1,$2) returning *', [email, nowS()])
+    await query('insert into users (email, specialty, created_at) values ($1,$2,$3) returning *', [email, specialty, nowS()])
   )[0];
 }
 function issueSession(res, userId) {
@@ -145,11 +252,17 @@ app.post(
   asyncHandler(async (req, res) => {
     const email = String(req.body?.email || '').trim().toLowerCase();
     const password = String(req.body?.password || '');
+    const requestedSpecialty = String(req.body?.specialty || '').trim();
+    const specialty = SPECIALTY_IDS.includes(requestedSpecialty) ? requestedSpecialty : DEFAULT_SPECIALTY;
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) || password.length < 6) {
       return res.status(400).json({ error: 'invalid_input' });
     }
     let user = await getUserByEmail(email);
-    if (!user) user = await createUser(email);
+    if (!user) user = await createUser(email, specialty);
+    else if (user.specialty !== specialty) {
+      await query('update users set specialty=$1 where id=$2', [specialty, user.id]);
+      user.specialty = specialty;
+    }
     const ph = await argon2.hash(password);
     await query('update users set password_hash=$1 where id=$2', [ph, user.id]);
     res.json({ ok: true });
@@ -267,7 +380,7 @@ app.get(
     )[0];
     if (!session || session.expires_at < nowS()) return res.json({ user: null });
     const user = await getUserById(session.user_id);
-    res.json({ user: { id: user.id, email: user.email } });
+    res.json({ user: { id: user.id, email: user.email, specialty: user.specialty || DEFAULT_SPECIALTY } });
   })
 );
 
@@ -309,6 +422,59 @@ if (DEBUG) {
     })
   );
 }
+
+// ---------- Specialty modules ----------
+app.get(
+  '/api/modules',
+  withAuth(async (req, res) => {
+    const modules = Object.values(SPECIALTY_MODULES).map((mod) => ({
+      id: mod.id,
+      name: mod.name,
+      summary: mod.summary,
+      tagline: mod.tagline,
+      features: mod.features,
+      comingSoon: Boolean(mod.comingSoon),
+    }));
+    res.json({ modules });
+  })
+);
+
+app.get(
+  '/api/modules/:id/template',
+  withAuth(async (req, res) => {
+    const module = SPECIALTY_MODULES[req.params.id];
+    if (!module || !module.template) return res.status(404).json({ error: 'not_found' });
+    res.json({ module: { id: module.id, name: module.name, template: module.template } });
+  })
+);
+
+app.get(
+  '/api/encounters/recent',
+  withAuth(async (req, res) => {
+    const specialtyParam = String(req.query.specialty || '').trim();
+    const specialty = SPECIALTY_IDS.includes(specialtyParam) ? specialtyParam : null;
+    const rows = await query(
+      `select e.id, e.title, e.specialty, e.template_id, e.data, e.created_at, e.patient_id, p.name as patient_name
+       from encounters e
+       join patients p on e.patient_id = p.id
+       where e.user_id=$1 ${specialty ? 'and e.specialty=$2' : ''}
+       order by e.created_at desc
+       limit 30`,
+      specialty ? [req.userId, specialty] : [req.userId]
+    );
+    const encounters = rows.map((row) => ({
+      id: row.id,
+      title: row.title,
+      specialty: row.specialty,
+      templateId: row.template_id,
+      data: typeof row.data === 'string' ? JSON.parse(row.data) : row.data || {},
+      createdAt: row.created_at,
+      patientId: row.patient_id,
+      patientName: row.patient_name,
+    }));
+    res.json({ encounters });
+  })
+);
 
 // ---------- Patients ----------
 app.get(
@@ -415,6 +581,69 @@ app.put(
     res.json({ ok: true });
   })
 );
+app.get(
+  '/api/patients/:id/encounters',
+  withAuth(async (req, res) => {
+    const patient = (
+      await query('select id from patients where id=$1 and user_id=$2', [req.params.id, req.userId])
+    )[0];
+    if (!patient) return res.status(404).json({ error: 'not_found' });
+    const rows = await query(
+      'select id, title, specialty, template_id, data, created_at from encounters where patient_id=$1 and user_id=$2 order by created_at desc limit 100',
+      [patient.id, req.userId]
+    );
+    const encounters = rows.map((row) => ({
+      id: row.id,
+      title: row.title,
+      specialty: row.specialty,
+      templateId: row.template_id,
+      data: typeof row.data === 'string' ? JSON.parse(row.data) : row.data || {},
+      createdAt: row.created_at,
+      patientId: patient.id,
+    }));
+    res.json({ encounters });
+  })
+);
+
+app.post(
+  '/api/patients/:id/encounters',
+  withAuth(async (req, res) => {
+    const patient = (
+      await query('select id from patients where id=$1 and user_id=$2', [req.params.id, req.userId])
+    )[0];
+    if (!patient) return res.status(404).json({ error: 'not_found' });
+    const {
+      templateId,
+      title,
+      summary,
+      specialty: requestedSpecialty,
+      vitals,
+      sections,
+      orders,
+      plan,
+      notes,
+    } = req.body || {};
+    const specialty = SPECIALTY_IDS.includes(requestedSpecialty) ? requestedSpecialty : DEFAULT_SPECIALTY;
+    if (!title && !summary && !sections && !plan) {
+      return res.status(400).json({ error: 'encounter_required' });
+    }
+    const encounterTitle = title || `Visit - ${new Date().toLocaleDateString()}`;
+    const data = {
+      summary: summary || '',
+      vitals: vitals || {},
+      sections: sections || [],
+      orders: orders || {},
+      plan: plan || '',
+      notes: notes || '',
+    };
+    await query(
+      'insert into encounters (patient_id, user_id, specialty, template_id, title, data, created_at) values ($1,$2,$3,$4,$5,$6,$7)',
+      [patient.id, req.userId, specialty, templateId || `${specialty}.core`, encounterTitle, JSON.stringify(data), nowS()]
+    );
+    res.json({ ok: true });
+  })
+);
+
 app.post(
   '/api/patients/:id/notes',
   withAuth(async (req, res) => {
