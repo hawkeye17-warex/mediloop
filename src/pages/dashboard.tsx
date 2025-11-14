@@ -201,6 +201,7 @@ export default function DashboardPage() {
   const [encountersLoading, setEncountersLoading] = useState(false);
   const [encounterForm, setEncounterForm] = useState<EncounterFormState>(GP_ENCOUNTER_FORM);
   const [encounterMessage, setEncounterMessage] = useState<string | null>(null);
+  const [seedAttempted, setSeedAttempted] = useState(false);
 
   const [patientForm, setPatientForm] = useState(PATIENT_FORM_DEFAULT);
   const [patientFeedback, setPatientFeedback] = useState<{ kind: 'error' | 'success'; message: string } | null>(null);
@@ -237,7 +238,13 @@ export default function DashboardPage() {
         const data = await getJson<Me>(res);
         if (!ignore) {
           if (!data.user) setMe(null);
-          else setMe({ email: data.user.email, specialty: data.user.specialty || 'general_physician' });
+          else {
+            setMe({
+              email: data.user.email,
+              specialty: data.user.specialty || 'general_physician',
+              role: data.user.role || 'doctor',
+            });
+          }
         }
       } catch (err) {
         console.error('auth me error', err);
@@ -250,6 +257,15 @@ export default function DashboardPage() {
 
   useEffect(() => {
     if (!authLoading && !me) navigate('/login');
+  }, [authLoading, me, navigate]);
+
+  useEffect(() => {
+    if (authLoading || !me) return;
+    if (me.role === 'receptionist') {
+      navigate('/reception', { replace: true });
+    } else if (me.role === 'admin') {
+      navigate('/admin', { replace: true });
+    }
   }, [authLoading, me, navigate]);
 
 
@@ -268,6 +284,20 @@ export default function DashboardPage() {
       setPatientsLoading(false);
     }
   }, [handleSessionExpired]);
+
+  useEffect(() => {
+    if (!authLoading && me && !seedAttempted && !patientsLoading && patients.length === 0) {
+      setSeedAttempted(true);
+      (async () => {
+        try {
+          await apiFetch('/demo/seed', { method: 'POST' });
+          await loadPatients();
+        } catch {
+          // ignore
+        }
+      })();
+    }
+  }, [authLoading, me, seedAttempted, patientsLoading, patients.length, loadPatients]);
 
   const loadAppointments = useCallback(async () => {
     setAppointmentsLoading(true);

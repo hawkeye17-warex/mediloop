@@ -1,32 +1,38 @@
-import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useCallback, useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { apiFetch, getJson } from '../lib/api';
 
 type Appointment = {
-  id: number;
-  patient_id: string;
-  patient_name?: string | null;
-  start_ts: number;
+  id: string;
+  patientId: string;
+  patientName?: string | null;
+  startTs: number;
   reason?: string | null;
   status?: string | null;
 };
 type AppointmentsRes = { appointments: Appointment[] };
+type UserProfile = { role?: string | null };
+type MeRes = { user: UserProfile | null };
 
 const STATUSES = ['scheduled', 'arrived', 'in_room', 'completed', 'cancelled'];
 
 export default function ReceptionHub() {
+  const navigate = useNavigate();
+  const [me, setMe] = useState<UserProfile | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState<string | null>(null);
+  const [attemptedSeed, setAttemptedSeed] = useState(false);
 
-  useEffect(() => {
-    void loadAppointments();
-  }, []);
-
-  async function loadAppointments() {
+  const loadAppointments = useCallback(async () => {
     setLoading(true);
     try {
       const res = await apiFetch('/appointments/upcoming');
+      if (res.status === 401) {
+        navigate('/login', { replace: true });
+        return;
+      }
       const data = await getJson<AppointmentsRes>(res);
       setAppointments(data.appointments);
     } catch {
@@ -34,9 +40,55 @@ export default function ReceptionHub() {
     } finally {
       setLoading(false);
     }
-  }
+  }, [navigate]);
 
-  async function handleStatusChange(id: number, status: string) {
+  useEffect(() => {
+    let ignore = false;
+    (async () => {
+      try {
+        const res = await apiFetch('/auth/me');
+        const data = await getJson<MeRes>(res);
+        if (ignore) return;
+        if (!data.user) {
+          navigate('/login', { replace: true });
+        } else {
+          setMe(data.user);
+        }
+      } catch (err) {
+        console.error('reception auth error', err);
+      } finally {
+        if (!ignore) setAuthLoading(false);
+      }
+    })();
+    return () => { ignore = true; };
+  }, [navigate]);
+
+  useEffect(() => {
+    if (authLoading || !me) return;
+    if (me.role && me.role !== 'receptionist') {
+      navigate(me.role === 'admin' ? '/admin' : '/dashboard', { replace: true });
+      return;
+    }
+    void loadAppointments();
+  }, [authLoading, me, loadAppointments, navigate]);
+
+  useEffect(() => {
+    if (authLoading || me?.role !== 'receptionist') return;
+    if (!loading && appointments.length === 0 && !attemptedSeed) {
+      setAttemptedSeed(true);
+      (async () => {
+        try {
+          await apiFetch('/demo/seed', { method: 'POST' });
+          await loadAppointments();
+          setMessage('Loaded sample appointments.');
+        } catch {
+          // ignore
+        }
+      })();
+    }
+  }, [authLoading, me, loading, appointments.length, attemptedSeed, loadAppointments]);
+
+  async function handleStatusChange(id: string, status: string) {
     try {
       const res = await apiFetch(`/appointments/${id}`, { method: 'PATCH', json: { status } });
       if (!res.ok) {
@@ -51,6 +103,22 @@ export default function ReceptionHub() {
     }
   }
 
+  if (authLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50 text-slate-500 text-sm">
+        Checking your access...
+      </div>
+    );
+  }
+
+  if (me?.role && me.role !== 'receptionist') {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50 text-slate-500 text-sm">
+        Redirecting you to your workspace...
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-slate-50 px-6 py-10 text-slate-800">
       <div className="max-w-5xl mx-auto space-y-6">
@@ -60,7 +128,13 @@ export default function ReceptionHub() {
             <h1 className="text-3xl font-semibold text-[#122E3A]">Manage Today's Queue</h1>
             <p className="text-sm text-slate-500">Track arrivals, move patients to doctors, and keep the day on schedule.</p>
           </div>
-          <Link to="/dashboard" className="text-sm text-[#1AA898] underline">Doctor view</Link>
+          <button
+            type="button"
+            onClick={() => { void apiFetch('/auth/logout', { method: 'POST' }).then(() => { window.location.href = '/login'; }); }}
+            className="text-sm text-[#1AA898]"
+          >
+            Logout
+          </button>
         </header>
 
         <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
@@ -73,7 +147,7 @@ export default function ReceptionHub() {
           </div>
           {message && <p className="text-sm text-[#1AA898] mb-3">{message}</p>}
           {loading ? (
-            <p className="text-sm text-slate-500">Loading appointments…</p>
+            <p className="text-sm text-slate-500">Loading appointments...</p>
           ) : appointments.length === 0 ? (
             <p className="text-sm text-slate-500">No appointments on the schedule.</p>
           ) : (
@@ -81,9 +155,9 @@ export default function ReceptionHub() {
               {appointments.map((appt) => (
                 <article key={appt.id} className="border border-slate-200 rounded-xl px-4 py-3 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
                   <div>
-                    <p className="text-sm font-semibold text-[#122E3A]">{appt.patient_name || 'Patient'}</p>
+                    <p className="text-sm font-semibold text-[#122E3A]">{appt.patientName || 'Patient'}</p>
                     <p className="text-xs text-slate-500">
-                      {new Date(appt.start_ts * 1000).toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' })}
+                      {new Date(appt.startTs * 1000).toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' })}
                       {' · '}
                       {appt.reason || 'General visit'}
                     </p>

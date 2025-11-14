@@ -123,6 +123,110 @@ ensureCoreSchema().catch((err) => {
   console.error('Failed to ensure core schema', err);
 });
 
+async function seedUserDemoData(userId) {
+  const count = await query('select count(*)::int as count from patients where user_id=$1', [userId]);
+  if (Number(count[0]?.count || 0) > 0) return;
+  const now = nowS();
+  const mkId = () => (crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(12).toString('hex'));
+  const patientSeeds = [
+    { id: mkId().slice(0, 12), name: 'Ava Patel', dob: '1985-04-12', gender: 'Female', phone: '555-0123', email: 'ava.patel@example.com', address: '123 King St, Toronto' },
+    { id: mkId().slice(0, 12), name: 'Leo Martin', dob: '1978-11-02', gender: 'Male', phone: '555-0456', email: 'leo.martin@example.com', address: '77 Lakeshore Rd, Toronto' },
+    { id: mkId().slice(0, 12), name: 'Priya Singh', dob: '1990-07-18', gender: 'Female', phone: '555-0822', email: 'priya.singh@example.com', address: '8 Yonge St, Toronto' },
+    { id: mkId().slice(0, 12), name: 'Mateo Alvarez', dob: '1969-03-29', gender: 'Male', phone: '555-2334', email: 'mateo.alvarez@example.com', address: '442 Osborne Rd, Winnipeg' },
+    { id: mkId().slice(0, 12), name: 'Sophia Chen', dob: '1998-01-05', gender: 'Female', phone: '555-3345', email: 'sophia.chen@example.com', address: '22 Robson St, Vancouver' },
+  ];
+  for (const patient of patientSeeds) {
+    await query(
+      'insert into patients (id, user_id, name, dob, gender, phone, email, address, created_at) values ($1,$2,$3,$4,$5,$6,$7,$8,$9)',
+      [patient.id, userId, patient.name, patient.dob, patient.gender, patient.phone, patient.email, patient.address, now]
+    );
+  }
+
+  const appointmentSeeds = [
+    { patientId: patientSeeds[0].id, offset: 3600, reason: 'Follow-up for hypertension', status: 'scheduled', triage: 'Bring BP log' },
+    { patientId: patientSeeds[1].id, offset: 7200, reason: 'Chronic pain flare-up', status: 'arrived', triage: 'Prefers Dr. Shaw' },
+    { patientId: patientSeeds[2].id, offset: 14400, reason: 'New patient physical', status: 'scheduled', triage: 'Complete intake package' },
+    { patientId: patientSeeds[3].id, offset: 21600, reason: 'Lab review + med titration', status: 'in_room', triage: 'Prep CMP + lipid panel results' },
+    { patientId: patientSeeds[4].id, offset: -5400, reason: 'Telehealth respiratory follow-up', status: 'completed', triage: 'Document antibiotic response' },
+  ];
+  for (const appt of appointmentSeeds) {
+    await query(
+      'insert into appointments (id, patient_id, user_id, clinic_id, start_ts, reason, status, triage_notes, created_at) values ($1,$2,$3,$4,$5,$6,$7,$8,$9)',
+      [mkId(), appt.patientId, userId, null, now + appt.offset, appt.reason, appt.status, appt.triage, now]
+    );
+  }
+
+  const labSeeds = [
+    { patientId: patientSeeds[0].id, test: 'CBC + A1C', labName: 'Prairie Labs - Downtown', labCity: 'Toronto', status: 'requested', notes: 'Routine check-up panel' },
+    { patientId: patientSeeds[2].id, test: 'Lipid Panel + Thyroid', labName: 'HealthPlus Labs', labCity: 'Toronto', status: 'scheduled', notes: 'Fasting instructions sent' },
+    { patientId: patientSeeds[3].id, test: 'MRI Spine', labName: 'Broadway Imaging', labCity: 'Toronto', status: 'completed', notes: 'Awaiting radiology report' },
+  ];
+  for (const order of labSeeds) {
+    await query(
+      'insert into lab_orders (id, patient_id, user_id, test, lab_name, lab_city, status, notes, created_at) values ($1,$2,$3,$4,$5,$6,$7,$8,$9)',
+      [mkId(), order.patientId, userId, order.test, order.labName, order.labCity, order.status, order.notes, now]
+    );
+  }
+
+  const referralSeeds = [
+    {
+      patientId: patientSeeds[1].id,
+      patientName: patientSeeds[1].name,
+      specialistId: 'cardio-lakeview',
+      specialistName: 'Dr. Ava Norris',
+      specialistOrg: 'Lakeview Cardiology',
+      status: 'pending',
+      reason: 'Recurring chest tightness',
+      notes: 'Share latest ECG',
+      urgency: 'urgent',
+    },
+    {
+      patientId: patientSeeds[2].id,
+      patientName: patientSeeds[2].name,
+      specialistId: 'endo-clarion',
+      specialistName: 'Dr. Mila Chen',
+      specialistOrg: 'Clarion Endocrine Clinic',
+      status: 'submitted',
+      reason: 'Difficult-to-control diabetes',
+      notes: 'Include CGM download',
+      urgency: 'routine',
+    },
+    {
+      patientId: patientSeeds[4].id,
+      patientName: patientSeeds[4].name,
+      specialistId: 'derm-sunrise',
+      specialistName: 'Dr. Noah Reyes',
+      specialistOrg: 'Sunrise Dermatology',
+      status: 'accepted',
+      reason: 'Non-healing facial lesion',
+      notes: 'Add dermoscopy photos',
+      urgency: 'routine',
+    },
+  ];
+  for (const referral of referralSeeds) {
+    const id = mkId();
+    const nowTs = now;
+    await query(
+      'insert into referrals (id, patient_id, user_id, patient_name, specialist_id, specialist_name, specialist_org, status, reason, notes, urgency, created_at, updated_at) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)',
+      [
+        id,
+        referral.patientId,
+        userId,
+        referral.patientName,
+        referral.specialistId,
+        referral.specialistName,
+        referral.specialistOrg,
+        referral.status,
+        referral.reason,
+        referral.notes,
+        referral.urgency,
+        nowTs,
+        nowTs,
+      ]
+    );
+  }
+}
+
 // ---------- Crypto helpers ----------
 const RAW_SECRET = process.env.AUTH_SECRET || 'dev-secret-change-me';
 const KEY = crypto.scryptSync(RAW_SECRET, 'mediloop-salt', 32);
@@ -485,6 +589,7 @@ app.post(
     const user = await createUser(email, specialty, role);
     const ph = await argon2.hash(password);
     await query('update users set password_hash=$1 where id=$2', [ph, user.id]);
+    await seedUserDemoData(user.id);
     res.json({ ok: true, role: user.role || DEFAULT_ROLE });
   })
 );
@@ -990,6 +1095,14 @@ app.post(
         nowS(),
       ]
     );
+    res.json({ ok: true });
+  })
+);
+
+app.post(
+  '/api/demo/seed',
+  withAuth(async (req, res) => {
+    await seedUserDemoData(req.userId);
     res.json({ ok: true });
   })
 );

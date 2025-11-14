@@ -16,7 +16,8 @@ import PatientDetail from './pages/patient-detail';
 
 function Shell() {
   const location = useLocation();
-  const hideChrome = location.pathname.startsWith('/dashboard');
+  const hideRoutes = ['/dashboard', '/admin', '/reception'];
+  const hideChrome = hideRoutes.some((path) => location.pathname.startsWith(path));
   return (
     <>
       {!hideChrome && <Navbar />}
