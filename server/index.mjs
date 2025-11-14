@@ -40,13 +40,15 @@ async function ensureSpecialtySchema() {
   await query(`create table if not exists encounters (
     id uuid primary key default gen_random_uuid(),
     patient_id text not null,
-    user_id uuid not null references users(id) on delete cascade,
+    user_id text not null,
     specialty text not null,
     template_id text,
     title text,
     data jsonb,
     created_at bigint not null
   )`);
+  await query('alter table encounters drop constraint if exists encounters_user_id_fkey');
+  await query('alter table encounters alter column user_id type text using user_id::text');
   await query('create index if not exists idx_encounters_user on encounters(user_id)');
   await query('create index if not exists idx_encounters_patient on encounters(patient_id)');
 }
@@ -74,7 +76,7 @@ async function ensureCoreSchema() {
   await query(`create table if not exists appointments (
     id uuid primary key default gen_random_uuid(),
     patient_id text not null,
-    user_id uuid not null references users(id) on delete cascade,
+    user_id text not null,
     clinic_id uuid,
     start_ts bigint not null,
     reason text,
@@ -83,6 +85,11 @@ async function ensureCoreSchema() {
     created_at bigint not null
   )`);
   await query('alter table appointments add column if not exists clinic_id uuid');
+  await query('alter table appointments add column if not exists status text default \'scheduled\'');
+  await query('alter table appointments add column if not exists triage_notes text');
+  await query('alter table appointments add column if not exists reason text');
+  await query('alter table appointments drop constraint if exists appointments_user_id_fkey');
+  await query('alter table appointments alter column user_id type text using user_id::text');
   await query('alter table appointments add column if not exists fee_cents integer default 0');
   await query('alter table appointments add column if not exists payment_status text default \'unpaid\'');
   await query('alter table appointments add column if not exists visit_type text');
@@ -92,7 +99,7 @@ async function ensureCoreSchema() {
   await query(`create table if not exists lab_orders (
     id uuid primary key default gen_random_uuid(),
     patient_id text not null,
-    user_id uuid not null references users(id) on delete cascade,
+    user_id text not null,
     clinic_id uuid,
     test text,
     lab_name text,
@@ -102,10 +109,12 @@ async function ensureCoreSchema() {
     created_at bigint not null
   )`);
   await query('alter table lab_orders add column if not exists clinic_id uuid');
+  await query('alter table lab_orders drop constraint if exists lab_orders_user_id_fkey');
+  await query('alter table lab_orders alter column user_id type text using user_id::text');
   await query(`create table if not exists referrals (
     id uuid primary key default gen_random_uuid(),
     patient_id text not null,
-    user_id uuid not null references users(id) on delete cascade,
+    user_id text not null,
     clinic_id uuid,
     patient_name text,
     specialist_id text,
@@ -119,6 +128,8 @@ async function ensureCoreSchema() {
     updated_at bigint not null
   )`);
   await query('alter table referrals add column if not exists clinic_id uuid');
+  await query('alter table referrals drop constraint if exists referrals_user_id_fkey');
+  await query('alter table referrals alter column user_id type text using user_id::text');
   await query(`create table if not exists audit_logs (
     id uuid primary key default gen_random_uuid(),
     user_id text,
@@ -140,7 +151,7 @@ async function ensureCoreSchema() {
     method text,
     status text default 'paid',
     note text,
-    recorded_by uuid references users(id),
+    recorded_by text,
     receipt_number text,
     created_at bigint not null
   )`);
